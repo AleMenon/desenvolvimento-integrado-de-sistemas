@@ -1,0 +1,7 @@
+numpy
+fastapi
+uvicorn
+requests
+psutil
+matplotlib
+pytest
