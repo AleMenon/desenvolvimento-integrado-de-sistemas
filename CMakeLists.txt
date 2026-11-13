@@ -54,3 +54,9 @@ if(BUILD_TESTING)
     target_link_libraries(matrix_operations_runner PRIVATE matrix_operations)
     # Python é necessário somente para a comparação opcional via pytest.
 endif()
+
+# TASK-08 — Validação experimental com matrizes reais.
+add_executable(cgnr_experiment_runner
+    tests/integration/cgnr_experiment_runner.cpp
+)
+target_link_libraries(cgnr_experiment_runner PRIVATE cgnr)
