@@ -4,7 +4,7 @@
 
 O projeto utiliza:
 
-- Python 3
+- Python 3.12
 - C++17
 - NumPy
 - Eigen
@@ -13,8 +13,11 @@ O projeto utiliza:
 - FastAPI e Uvicorn
 - Requests
 - Pytest
+- uv (gerenciamento de dependências Python)
 
 ## 2. Pré-requisitos
+
+### 2.1 Dependências do sistema
 
 Em distribuições Linux baseadas em Ubuntu/Debian:
 
@@ -23,8 +26,6 @@ sudo apt update
 
 sudo apt install -y \
     python3 \
-    python3-venv \
-    python3-pip \
     g++ \
     cmake \
     build-essential \
@@ -32,37 +33,91 @@ sudo apt install -y \
     libopenblas-dev
 ```
 
+### 2.2 Instalação do uv
+
+O projeto utiliza o `uv` para gerenciar o ambiente virtual e as dependências Python.
+
+Instale utilizando o instalador oficial:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Verifique a instalação:
+
+```bash
+uv --version
+```
+
 ## 3. Ambiente Python
+
+### 3.1 Versão do Python
+
+O projeto utiliza Python 3.12, definido no arquivo `.python-version`.
+
+O `uv` permite instalar essa versão caso ela não esteja disponível:
+
+```bash
+uv python install 3.12
+```
+
+### 3.2 Instalação das dependências
 
 Na raiz do repositório:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+uv sync --locked
 ```
 
-Para verificar a instalação e a configuração do NumPy:
+O comando cria ou atualiza automaticamente o ambiente virtual `.venv/` de acordo com o `pyproject.toml` e o `uv.lock`.
+
+Os arquivos possuem as seguintes responsabilidades:
+
+| Arquivo | Finalidade |
+|---|---|
+| `pyproject.toml` | Declara as dependências e configurações do projeto |
+| `uv.lock` | Registra as versões resolvidas das dependências |
+| `.python-version` | Define a versão de Python utilizada |
+
+O arquivo `uv.lock` deve ser versionado para permitir a reprodução das dependências em diferentes ambientes.
+
+### 3.3 Verificação do NumPy
+
+Para verificar a instalação:
 
 ```bash
-python -c "import numpy as np; print(np.__version__); np.show_config()"
+uv run python -c "import numpy as np; print(np.__version__); np.show_config()"
 ```
+
+Para consultar as bibliotecas utilizadas durante a execução:
+
+```bash
+uv run python -c "import numpy as np; np.show_runtime()"
+```
+
+A configuração deve ser inspecionada para confirmar qual implementação BLAS está sendo utilizada.
+
+A instalação de OpenBLAS no sistema não garante que o NumPy utilize automaticamente essa mesma biblioteca.
 
 ## 4. Compilação C++
 
-Configurar o projeto:
+### 4.1 Configuração
+
+O projeto utiliza CMake para compilar os componentes C++17.
+
+Na raiz do repositório:
 
 ```bash
 cmake -S . -B build
 ```
 
-Compilar:
+### 4.2 Compilação
 
 ```bash
 cmake --build build
 ```
 
-Executar o teste do ambiente:
+### 4.3 Teste do ambiente
 
 ```bash
 ./build/environment_check
@@ -75,15 +130,30 @@ Ambiente C++ configurado!
 Resultado: 3 7
 ```
 
+O teste verifica a compilação C++ e uma operação matricial com Eigen.
+
+### 4.4 Integração com OpenBLAS
+
+O CMake configura a vinculação com OpenBLAS e utiliza a definição `EIGEN_USE_BLAS` para habilitar a integração em operações compatíveis.
+
+Nem todas as operações do Eigen são necessariamente executadas por meio do OpenBLAS.
+
+A utilização efetiva do backend deverá ser validada durante a implementação e os testes de desempenho.
+
 ## 5. Testes Python
 
-Com o ambiente virtual ativado:
+Execute:
 
 ```bash
-python -m pytest tests/environment/ -v
+uv run python -m pytest tests/environment/ -v
 ```
 
-Os testes verificam o produto matriz-vetor e a utilização de precisão `float64`.
+Os testes verificam:
+
+- Produto matriz-vetor utilizando NumPy.
+- Utilização da precisão numérica `float64`.
+
+Os testes de ambiente não substituem os testes específicos dos algoritmos de reconstrução.
 
 ## 6. Estrutura do projeto
 
@@ -98,21 +168,45 @@ tests/api/            Testes da API
 tests/integration/    Testes de integração
 ```
 
-## 7. Observações
+A organização permite separar os componentes de comunicação, processamento numérico, documentação e testes.
 
-- O ambiente virtual `.venv/` e o diretório `build/` não devem ser versionados.
-- A configuração do CMake permite localizar Eigen e OpenBLAS.
-- A utilização efetiva do OpenBLAS como backend numérico deverá ser verificada nas implementações.
-- Os testes de ambiente não substituem os testes dos algoritmos de reconstrução.
+## 7. Reprodutibilidade e desempenho
 
-## 8. Validação inicial
+Para manter condições consistentes entre os ambientes de desenvolvimento:
 
-O ambiente foi validado em Linux com Python 3.12.3 e GCC 13.3.0.
+- Utilizar Python 3.12.
+- Instalar dependências conforme o `uv.lock`.
+- Registrar as versões de NumPy, Eigen e OpenBLAS.
+- Verificar o backend BLAS efetivamente utilizado.
+- Utilizar os mesmos parâmetros numéricos nos experimentos.
+- Controlar o número de threads utilizadas pelas bibliotecas matemáticas.
+
+Para iniciar testes com uma thread BLAS por processo, configure antes de executar as aplicações:
+
+```bash
+export OPENBLAS_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+```
+
+Essas configurações buscam reduzir diferenças relacionadas ao paralelismo durante as comparações.
+
+## 8. Observações
+
+- O ambiente virtual `.venv/` não deve ser versionado.
+- O diretório `build/` também deve permanecer fora do Git.
+- Os arquivos `pyproject.toml`, `uv.lock` e `.python-version` devem ser versionados.
+- As versões das bibliotecas C++ instaladas no sistema devem ser registradas para os experimentos.
+- A utilização efetiva de OpenBLAS deverá ser verificada nas implementações numéricas.
+
+## 9. Validação inicial
+
+O ambiente inicial foi validado em Linux com Python 3.12.3 e GCC 13.3.0.
 
 Resultados obtidos:
 
 - Configuração CMake concluída.
 - OpenBLAS encontrado em `/usr/lib/x86_64-linux-gnu/libopenblas.so`.
 - Compilação C++ concluída.
-- Teste de operações matriciais com Eigen executado.
+- Teste matricial com Eigen executado.
 - Dois testes Python aprovados com Pytest.
+- Dependências Python resolvidas e sincronizadas utilizando `uv`.

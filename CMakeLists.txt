@@ -26,3 +26,8 @@ target_link_libraries(
     Eigen3::Eigen
     BLAS::BLAS
 )
+
+target_compile_definitions(
+    environment_check
+    PRIVATE EIGEN_USE_BLAS
+)
