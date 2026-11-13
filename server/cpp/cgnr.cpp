@@ -21,6 +21,7 @@ CgnrResult cgnr(const Matrix& h, const Vector& g,
     Vector z = h.transpose() * r;
     Vector p = z;
     const double initial_normal_norm = z.stableNorm();
+    const double threshold = tolerance * initial_normal_norm;
     result.residual_history.push_back(r.stableNorm());
 
     // Recalcula os resíduos verdadeiros, sem depender somente da recorrência.
@@ -34,16 +35,17 @@ CgnrResult cgnr(const Matrix& h, const Vector& g,
             && std::isfinite(result.residual_norm)
             && std::isfinite(result.normal_residual_norm);
         if (!finite) result.stop_reason = "numerical_breakdown";
-        result.converged = finite && (reason == "tolerance_reached"
-            || reason == "zero_residual");
+        result.converged = finite && reason != "numerical_breakdown"
+            && result.normal_residual_norm <= threshold;
+        if (result.converged) result.stop_reason = "tolerance_reached";
+        else if (reason == "tolerance_reached") result.stop_reason = "numerical_breakdown";
         return result;
     };
 
     if (!z.allFinite() || !std::isfinite(initial_normal_norm)
         || !std::isfinite(result.residual_history.back()))
         return finish("numerical_breakdown");
-    if (result.residual_history.back() == 0) return finish("zero_residual");
-    if (initial_normal_norm == 0) return finish("numerical_breakdown");
+    if (initial_normal_norm == 0) return finish("tolerance_reached");
 
     double gamma = z.squaredNorm();
     for (int iteration = 1; iteration <= max_iterations; ++iteration) {
@@ -71,7 +73,7 @@ CgnrResult cgnr(const Matrix& h, const Vector& g,
         r = next_r;
         result.iterations = iteration;
         result.residual_history.push_back(next_norm);
-        if (*result.error < tolerance)
+        if (next_normal_norm <= threshold)
             return finish("tolerance_reached");
         if (iteration == max_iterations) break;
 

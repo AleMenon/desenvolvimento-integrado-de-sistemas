@@ -44,6 +44,8 @@ target_link_libraries(cgnr PUBLIC matrix_operations)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(cgnr_runner tests/integration/cgnr_runner.cpp)
+    target_link_libraries(cgnr_runner PRIVATE cgnr)
     add_executable(test_cgnr tests/unit/test_cgnr.cpp)
     target_link_libraries(test_cgnr PRIVATE cgnr)
     add_test(NAME cgnr_cpp COMMAND test_cgnr)
