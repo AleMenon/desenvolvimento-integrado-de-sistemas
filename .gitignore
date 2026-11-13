@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# C++ / CMake
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# IDEs
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+*~
+
+# Dados gerados
+results/
+logs/
