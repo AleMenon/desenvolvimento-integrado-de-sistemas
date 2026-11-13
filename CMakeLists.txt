@@ -55,6 +55,12 @@ if(BUILD_TESTING)
     # Python é necessário somente para a comparação opcional via pytest.
 endif()
 
+# TASK-08 — Validação experimental com matrizes reais.
+add_executable(cgnr_experiment_runner
+    tests/integration/cgnr_experiment_runner.cpp
+)
+target_link_libraries(cgnr_experiment_runner PRIVATE cgnr)
+
 # TASK-13: servidor HTTP/JSON C++ compatível com o cliente da TASK-09.
 include(FetchContent)
 find_package(nlohmann_json 3.11 QUIET)
