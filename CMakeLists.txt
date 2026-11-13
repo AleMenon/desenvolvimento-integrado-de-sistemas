@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 
 project(
     desenvolvimento_integrado_de_sistemas
@@ -12,7 +12,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(BLA_VENDOR OpenBLAS)
 
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+# Eigen 5 mantém o nome do pacote Eigen3, mas não aceita pedidos de versão 3.x.
+find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(BLAS REQUIRED)
 
 add_executable(
@@ -31,3 +32,17 @@ target_compile_definitions(
     environment_check
     PRIVATE EIGEN_USE_BLAS
 )
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+add_library(matrix_operations server/cpp/matrix_operations.cpp)
+target_include_directories(matrix_operations PUBLIC server/cpp)
+target_link_libraries(matrix_operations PUBLIC Eigen3::Eigen BLAS::BLAS)
+target_compile_definitions(matrix_operations PUBLIC EIGEN_USE_BLAS)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_test(NAME environment_cpp COMMAND environment_check)
+    add_executable(matrix_operations_runner tests/integration/matrix_operations_runner.cpp)
+    target_link_libraries(matrix_operations_runner PRIVATE matrix_operations)
+    # Python é necessário somente para a comparação opcional via pytest.
+endif()

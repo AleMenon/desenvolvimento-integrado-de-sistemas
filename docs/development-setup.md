@@ -142,6 +142,9 @@ A utilização efetiva do backend deverá ser validada durante a implementação
 
 ## 5. Testes Python
 
+Para compilar as operações C++ e comparar com a implementação Python usando os
+dados da TASK-04, consulte [a validação da TASK-05](tests/task-05-matrix-operations.md).
+
 Execute:
 
 ```bash
