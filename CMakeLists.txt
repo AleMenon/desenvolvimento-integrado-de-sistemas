@@ -54,3 +54,31 @@ if(BUILD_TESTING)
     target_link_libraries(matrix_operations_runner PRIVATE matrix_operations)
     # Python é necessário somente para a comparação opcional via pytest.
 endif()
+
+# TASK-13: servidor HTTP/JSON C++ compatível com o cliente da TASK-09.
+include(FetchContent)
+find_package(nlohmann_json 3.11 QUIET)
+find_package(Threads REQUIRED)
+if(NOT nlohmann_json_FOUND)
+    set(JSON_BuildTests OFF CACHE INTERNAL "")
+    FetchContent_Declare(nlohmann_json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
+find_path(CPP_HTTPLIB_INCLUDE_DIR NAMES httplib.h)
+if(NOT CPP_HTTPLIB_INCLUDE_DIR)
+    FetchContent_Declare(cpp_httplib
+        URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.18.7.tar.gz
+    )
+    FetchContent_GetProperties(cpp_httplib)
+    if(NOT cpp_httplib_POPULATED)
+        FetchContent_Populate(cpp_httplib)
+    endif()
+    set(CPP_HTTPLIB_INCLUDE_DIR "${cpp_httplib_SOURCE_DIR}")
+endif()
+
+add_executable(reconstruction_server server/cpp/reconstruction_server.cpp)
+target_include_directories(reconstruction_server PRIVATE "${CPP_HTTPLIB_INCLUDE_DIR}")
+target_link_libraries(reconstruction_server PRIVATE cgnr nlohmann_json::nlohmann_json Threads::Threads)
