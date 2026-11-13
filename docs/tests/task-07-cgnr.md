@@ -1,90 +1,83 @@
 # TASK-07 — CGNR em C++
 
-Implementação: `server/cpp/cgnr.hpp` e `server/cpp/cgnr.cpp`.
-Alvo CMake: `cgnr`, vinculado a `matrix_operations` (Eigen/OpenBLAS, C++17).
+Implementação em `server/cpp/cgnr.hpp` e `.cpp`, alvo CMake `cgnr`.
+Usa Eigen/OpenBLAS, C++17 e `double`, sem formar HᵀH.
 
 ```cpp
 #include "cgnr.hpp"
-// H: matriz m × n; g: vetor de m medições, ambos em double.
-auto result = reconstruction::cgnr(H, g, 1e-4, 10);
-// result.solution tem n elementos.
+auto result = reconstruction::cgnr(H, g); // tolerance=1e-8, max_iterations=10
 ```
 
-## Algoritmo e parada
+## Critério de parada revisado
 
-Inicializa `f=0`, `r=g`, `z=H.transpose()*r` e `p=z`. Em cada iteração:
-
-1. `w = H*p`, `alpha = (zᵀz)/(wᵀw)`.
-2. `f = f + alpha*p`, `r = r - alpha*w`.
-3. `z_new = Hᵀr`; verifica a convergência.
-4. `beta = (z_newᵀz_new)/(zᵀz)` e `p = z_new + beta*p`.
-
-Não forma `HᵀH`. Valida as entradas uma vez e usa expressões Eigen nos laços,
-evitando repetir a varredura de validação da matriz a cada produto.
-
-**Critério do enunciado**, com a tolerância escrita como `10⁻⁴`:
+Por decisão da dupla após o review, o C++ foi alinhado à TASK-06:
 
 ```text
-epsilon = ||r_novo||₂ - ||r_anterior||₂
-parar quando epsilon < 1e-4
+||Hᵀ r_k||₂ <= tolerance * ||Hᵀ r_0||₂
 ```
 
-A diferença é assinada, sem valor absoluto e sem normalização. Portanto, uma
-redução do resíduo já satisfaz o critério e pode encerrar na primeira iteração,
-mesmo longe da solução exata. `converged` indica que esse critério foi satisfeito,
-não que o resíduo final seja pequeno. A branch Python consultada usa outro
-critério e deverá ser alinhada ao enunciado antes da comparação entre linguagens.
+A tolerância padrão é `1e-8`, relativa ao resíduo normal inicial. A inicialização
+continua `f0=0`, `r0=g`, `z0=Hᵀr0`, `p0=z0`. As recorrências de alpha, beta,
+solução, resíduo e direção seguem o CGNR. O limite permitido permanece entre
+1 e 10 iterações, com padrão 10.
 
-O limite padrão e máximo permitido é **10 iterações**. Valores fora de `[1, 10]`
-são rejeitados. A branch Python consultada permite limites maiores e estimativa
-inicial opcional; aqui `f0=0` é fixo, conforme a tarefa.
+A diferença assinada entre normas dos resíduos deixou de decidir a parada: ela
+podia encerrar na primeira redução do resíduo. O campo opcional `error` preserva
+essa diferença apenas para diagnóstico, ficando ausente antes do primeiro passo.
+Esta decisão difere da leitura literal do enunciado e deve ser confirmada com o
+professor; não representa uma alteração na fórmula das iterações do CGNR.
 
 ## Resultado e estabilidade
 
-O resultado contém `solution`, `iterations`, `converged`, `stop_reason`,
-`residual_norm`, `normal_residual_norm`, `residual_history` e `error`.
-O campo `error` registra epsilon; fica ausente antes da primeira iteração.
+Retorna `solution`, `iterations`, `converged`, `stop_reason`, `residual_norm`,
+`normal_residual_norm`, `residual_history` e `error`.
 
-- `tolerance_reached`: diferença assinada menor que a tolerância.
-- `zero_residual`: sinal inicial nulo, solução zero sem precisar dividir por zero.
+- `tolerance_reached`: critério relativo satisfeito e confirmado pelos resíduos
+  finais recalculados a partir de `g-Hf`.
 - `max_iterations`: limite atingido sem convergência.
-- `numerical_breakdown`: divisão degenerada, overflow, underflow que inviabiliza
-  os coeficientes ou atualização/resíduos finais não finitos.
+- `numerical_breakdown`: cálculo degenerado/não finito, ou divergência entre a
+  parada pela recorrência e a verificação final.
 
-São rejeitados dimensões incompatíveis/vazias, entradas não finitas e tolerância
-não positiva ou não finita com `std::invalid_argument`. Não se usa um epsilon
-absoluto fixo para descartar denominadores pequenos: sua escala depende dos dados.
+Resíduo normal inicial nulo retorna solução zero com zero iterações, inclusive
+para mínimos quadrados com resíduo convencional não nulo. Entradas vazias,
+incompatíveis, não finitas e parâmetros inválidos lançam `std::invalid_argument`.
+Overflow/underflow inviabilizando os coeficientes é detectado; atualizações não
+finitas não substituem a última solução válida. Normas finais podem ser não finitas
+em falhas extremas; a futura API deve tratar esse estado antes de serializar JSON.
+Não se usa epsilon absoluto fixo para descartar denominadores pequenos.
 
-As atualizações são verificadas antes de substituir a solução anterior. Somente
-passos aceitos são contabilizados; o histórico tem `iterations + 1` entradas.
-Ao encerrar, recalcula `g-Hf` e `Hᵀ(g-Hf)` para informar as normas finais.
-Se esses cálculos também excederem a faixa de `double`, as normas podem ser não
-finitas e o resultado indica falha numérica; a futura API deve tratar esse estado
-antes de serializar JSON. O método sinaliza instabilidade, sem prometer resolver
-sistemas de escala arbitrária ou aplicar pré-condicionamento.
+A interface C++ mantém estimativa inicial zero e limite máximo obrigatório de 10.
+Python também permite `x0` e limites superiores; os testes comparam o domínio comum.
+As proteções C++ podem encerrar de forma mais conservadora em instabilidades
+extremas; equivalência não é afirmada para todos os dados possíveis.
 
-Sinal inicial nulo encerra com sucesso e zero iterações. Se a direção inicial é
-nula mas o sinal não é, encerra como `numerical_breakdown`, sem afirmar que o
-critério de erro foi atingido.
-
-## Validação
+## Testes
 
 ```bash
+uv sync --locked
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 ctest --test-dir build --output-on-failure
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run --locked python -m pytest tests/ -q
 ```
 
-`tests/unit/test_cgnr.cpp` verifica soluções conhecidas de um passo e resultados
-do primeiro passo calculados à mão para sistemas diagonal e retangular. Testa
-explicitamente a parada pela diferença negativa com resíduo ainda não nulo,
-preservação das entradas, metadados, limites permitidos de 1 e 10, rejeição de
-limites maiores, validação de entradas, escalas pequenas
-representáveis e detecção de overflow/underflow. As verificações executam em Release.
+`tests/unit/test_cgnr.cpp` verifica soluções conhecidas, preservação das entradas,
+metadados, limites, instabilidades e que a redução do resíduo não encerre sozinha
+a execução na primeira iteração. As verificações funcionam em Release.
 
-Na validação local, os dois testes CTest (`cgnr_cpp` e `environment_cpp`) passaram.
-O aceite de equivalência com Python permanece **pendente**, conforme solicitado.
-Não foram importados arquivos da outra branch nem alterada sua implementação.
-Os modelos `H-2.csv.zip` e sinais de reconstrução citados na TASK-06 não estão
-disponíveis neste checkout; o `Dados.zip` existente contém exemplos de operações
-matriciais, não uma referência de reconstrução CGNR.
+`tests/integration/test_cpp_cgnr.py` executa as funções reais Python e C++ com os
+mesmos valores (transmitidos com 17 dígitos), tolerância e limite. São 22 casos:
+identidade, diagonal, retangular, mínimos quadrados inconsistentes, sinal zero,
+matriz nula, posto deficiente, subdeterminado, sistema diagonal de 20 variáveis,
+sistema aleatório com semente fixa e dados de pequena escala; cada caso roda com
+limites de 1 e 10 passos.
+
+Compara solução, histórico e normas finais com `rtol=1e-8`, `atol=1e-10`, além de
+igualdade na contagem de iterações e no indicador de convergência. Verifica também
+formas, finitude e limite de iterações. `CGNR_RUNNER` permite informar um caminho
+alternativo ao executável padrão `build/cgnr_runner`.
+
+Resultado após o review: **2 testes CTest e 104 testes pytest aprovados**, incluindo
+as 22 novas comparações entre linguagens. Isso comprova equivalência nos casos
+testados; os experimentos completos dos modelos 30×30 e 60×60 devem ser repetidos
+na TASK-08 após incorporar esta revisão.
