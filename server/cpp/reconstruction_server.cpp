@@ -15,6 +15,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -188,6 +189,19 @@ struct Job {
     json finished_at = nullptr;
     json result = nullptr;
     json failure = nullptr;
+    json execution_time_ms = nullptr;
+    json iterations = nullptr;
+    json converged = nullptr;
+    json stop_reason = nullptr;
+
+    json metrics_json() const {
+        return {{"request_id", id}, {"client_id", client_id}, {"signal_id", signal_id},
+                {"model_id", model->id}, {"algorithm", "cgnr"}, {"status", status},
+                {"created_at", created_at}, {"started_at", started_at},
+                {"finished_at", finished_at}, {"execution_time_ms", execution_time_ms},
+                {"iterations", iterations}, {"converged", converged},
+                {"stop_reason", stop_reason}};
+    }
 
     json status_json() const {
         json response = {{"request_id", id}, {"status", status},
@@ -218,6 +232,20 @@ public:
     void configure_routes(httplib::Server& http) {
         http.Get("/health", [](const httplib::Request&, httplib::Response& res) {
             respond(res, 200, {{"status", "ok"}});
+        });
+        // Metrics endpoints deliberately omit large reconstructed vectors.
+        http.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
+            std::lock_guard<std::mutex> guard(mutex_);
+            respond(res, 200, metrics_snapshot());
+        });
+        http.Get("/metrics/reconstructions", [this](const httplib::Request&, httplib::Response& res) {
+            json records = json::array();
+            {
+                std::lock_guard<std::mutex> guard(mutex_);
+                for (const auto& pair : jobs_) records.push_back(pair.second->metrics_json());
+            }
+            respond(res, 200, {{"schema_version", 1}, {"implementation", "cpp"},
+                               {"reconstructions", std::move(records)}});
         });
         http.Get("/models", [this](const httplib::Request&, httplib::Response& res) {
             json list = json::array();
@@ -258,6 +286,53 @@ public:
     }
 
 private:
+    // Guarded by mutex_. Time-weighted queue metrics include idle (queue=0).
+    void accrue_queue_until(std::chrono::steady_clock::time_point now) {
+        const double elapsed_ms = std::chrono::duration<double, std::milli>(
+            now - last_queue_update_).count();
+        if (elapsed_ms > 0) {
+            queue_histogram_ms_[queue_.size()] += elapsed_ms;
+            weighted_queue_ms_ += elapsed_ms * static_cast<double>(queue_.size());
+        }
+        last_queue_update_ = now;
+    }
+
+    json metrics_snapshot() {
+        const auto now = std::chrono::steady_clock::now();
+        accrue_queue_until(now);
+        const double uptime_ms = std::chrono::duration<double, std::milli>(now - started_).count();
+        std::size_t completed = 0;
+        std::size_t running = 0;
+        std::size_t failed = 0;
+        double reconstruction_ms = 0.0;
+        for (const auto& item : jobs_) {
+            const auto& job = *item.second;
+            if (job.status == "running") ++running;
+            else if (job.status == "failed") ++failed;
+            else if (job.status == "completed") {
+                ++completed;
+                reconstruction_ms += job.execution_time_ms.get<double>();
+            }
+        }
+        std::size_t mode = 0;
+        double longest_ms = -1.0;
+        for (const auto& pair : queue_histogram_ms_) {
+            if (pair.second > longest_ms) {
+                mode = pair.first;
+                longest_ms = pair.second;
+            }
+        }
+        return {{"schema_version", 1}, {"implementation", "cpp"},
+                {"timestamp_utc", utc_now()}, {"uptime_ms", uptime_ms},
+                {"received_count", jobs_.size()}, {"completed_count", completed},
+                {"failed_count", failed}, {"running_count", running},
+                {"queue_size", queue_.size()},
+                {"queue_mean", uptime_ms > 0 ? weighted_queue_ms_ / uptime_ms : 0.0},
+                {"queue_mode", mode},
+                {"mean_reconstruction_time_ms",
+                    completed ? json(reconstruction_ms / completed) : json(nullptr)}};
+    }
+
     std::shared_ptr<Job> find_job(const std::string& id) {
         std::lock_guard<std::mutex> guard(mutex_);
         const auto it = jobs_.find(id);
@@ -325,6 +400,7 @@ private:
             std::lock_guard<std::mutex> guard(mutex_);
             if (queue_.size() >= queue_capacity_)
                 return error(res, 503, "QUEUE_FULL", "Fila temporariamente cheia");
+            accrue_queue_until(std::chrono::steady_clock::now());
             jobs_.emplace(job->id, job);
             queue_.push_back(job);
         }
@@ -340,6 +416,7 @@ private:
                 std::unique_lock<std::mutex> guard(mutex_);
                 wake_.wait(guard, [&] { return stopping_ || !queue_.empty(); });
                 if (stopping_ && queue_.empty()) return;
+                accrue_queue_until(std::chrono::steady_clock::now());
                 job = queue_.front();
                 queue_.pop_front();
                 job->status = "running";
@@ -378,11 +455,18 @@ private:
                 };
                 std::lock_guard<std::mutex> guard(mutex_);
                 job->finished_at = payload["metadata"]["finished_at"];
+                job->execution_time_ms = duration;
+                job->iterations = result.iterations;
+                job->converged = result.converged;
+                job->stop_reason = result.stop_reason;
                 job->result = std::move(payload);
                 job->status = "completed";
             } catch (const std::exception&) {
                 std::lock_guard<std::mutex> guard(mutex_);
                 job->finished_at = utc_now();
+                job->execution_time_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - start).count();
+                job->stop_reason = "reconstruction_failed";
                 job->failure = {{"code", "RECONSTRUCTION_FAILED"},
                                 {"message", "Erro ao executar a reconstrução"}};
                 job->status = "failed";
@@ -392,6 +476,11 @@ private:
 
     const std::unordered_map<std::string, std::shared_ptr<const Model>> models_;
     const std::size_t queue_capacity_;
+    // Metrics use a monotonic clock, never the system clock for durations.
+    const std::chrono::steady_clock::time_point started_{std::chrono::steady_clock::now()};
+    std::chrono::steady_clock::time_point last_queue_update_{started_};
+    double weighted_queue_ms_ = 0.0;
+    std::map<std::size_t, double> queue_histogram_ms_;
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::shared_ptr<Job>> queue_;
