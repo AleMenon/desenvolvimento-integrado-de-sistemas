@@ -13,7 +13,7 @@ Não forma explicitamente a matriz H.T @ H.
 import numpy as np
 
 
-def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
+def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
     """Resolve Hx ≈ g utilizando CGNR.
 
     Parâmetros:
@@ -65,9 +65,6 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
     if not np.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("A tolerância deve ser positiva e finita.")
 
-    if max_iterations is None:
-        max_iterations = max(1, 2 * n)
-
     if (
         isinstance(max_iterations, (bool, np.bool_))
         or not isinstance(max_iterations, (int, np.integer))
@@ -80,6 +77,7 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
     # Estimativa inicial
     if x0 is None:
         x = np.zeros(n, dtype=np.float64)
+        r = g.copy()
     else:
         try:
             x = np.asarray(x0, dtype=np.float64).copy()
@@ -96,8 +94,11 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
         if not np.all(np.isfinite(x)):
             raise ValueError("x0 deve conter apenas valores finitos.")
 
+        r = g - h @ x
+
     # Resíduo inicial: r = g - Hx
-    r = g - h @ x
+    if not np.all(np.isfinite(r)):
+        raise ValueError("O resíduo inicial não é finito.")
 
     # Resíduo normal: z = H.T @ r
     z = h.T @ r
@@ -107,8 +108,10 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
 
     gamma = float(z @ z)
 
+    # np.linalg.norm evita underflow intermediário do produto z @ z.
+    initial_normal_norm = float(np.hypot.reduce(z))
+
     # Critério relativo baseado no resíduo normal inicial
-    initial_normal_norm = np.sqrt(gamma)
     threshold = tolerance * initial_normal_norm
 
     residual_history = [float(np.linalg.norm(r))]
@@ -126,6 +129,18 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
     converged = False
     iterations = 0
 
+    # Um produto interno pode virar zero por underflow mesmo
+    # quando o resíduo normal não é zero. Isso NÃO é convergência.
+    if gamma == 0.0 or not np.isfinite(gamma):
+        return {
+            "solution": x,
+            "iterations": 0,
+            "converged": False,
+            "residual_norm": float(np.linalg.norm(r)),
+            "normal_residual_norm": initial_normal_norm,
+            "residual_history": residual_history,
+        }
+
     for iteration in range(1, max_iterations + 1):
         # Produto matriz-vetor: q = H @ p
         q = h @ p
@@ -139,9 +154,21 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
         # Comprimento do passo
         alpha = gamma / denominator
 
-        # Atualização da solução e do resíduo
-        x = x + alpha * p
-        r = r - alpha * q
+        if not np.isfinite(alpha):
+            break
+
+        # Verifica os candidatos antes de atualizar o estado.
+        new_x = x + alpha * p
+        new_r = r - alpha * q
+
+        if (
+            not np.all(np.isfinite(new_x))
+            or not np.all(np.isfinite(new_r))
+        ):
+            break
+
+        x = new_x
+        r = new_r
 
         # Novo resíduo normal
         z_new = h.T @ r
@@ -151,25 +178,39 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=None):
         iterations = iteration
         residual_history.append(float(np.linalg.norm(r)))
 
-        if not np.isfinite(gamma_new):
+        normal_norm = float(np.hypot.reduce(z_new))
+
+        if not np.isfinite(normal_norm):
             break
 
         # Critério de parada
-        if np.sqrt(gamma_new) <= threshold:
+        if normal_norm <= threshold:
             converged = True
+            break
+
+        # Evita divisões por zero e resultados não finitos.
+        if gamma_new == 0.0 or not np.isfinite(gamma_new):
             break
 
         # Atualização da direção conjugada
         beta = gamma_new / gamma
-        p = z_new + beta * p
 
+        if not np.isfinite(beta):
+            break
+
+        new_p = z_new + beta * p
+
+        if not np.all(np.isfinite(new_p)):
+            break
+
+        p = new_p
         gamma = gamma_new
 
     # Recalcula os resíduos usando a solução final
     final_r = g - h @ x
     final_z = h.T @ final_r
 
-    final_normal_norm = float(np.linalg.norm(final_z))
+    final_normal_norm = float(np.hypot.reduce(final_z))
 
     if final_normal_norm <= threshold:
         converged = True

@@ -239,3 +239,28 @@ def test_cgnr_rank_deficient_system():
     )
 
     assert result["converged"]
+
+
+def test_cgnr_default_iteration_limit():
+    """O limite padrão deve ser de 10 iterações."""
+
+    h = np.diag(np.linspace(1.0, 3.0, 25))
+    g = np.ones(25)
+
+    result = cgnr(h, g, tolerance=1e-16)
+
+    assert result["iterations"] <= 10
+
+
+def test_cgnr_underflow_does_not_report_convergence():
+    """Underflow não pode ser confundido com convergência."""
+
+    h = np.array([[1e-200]], dtype=np.float64)
+    g = np.array([1.0], dtype=np.float64)
+
+    result = cgnr(h, g)
+
+    assert result["converged"] is False
+    assert result["iterations"] == 0
+    assert result["residual_norm"] == 1.0
+    assert result["normal_residual_norm"] > 0.0

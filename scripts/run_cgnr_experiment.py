@@ -129,7 +129,7 @@ def main():
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=30,
+        default=10,
     )
 
     parser.add_argument(
@@ -140,8 +140,15 @@ def main():
 
     args = parser.parse_args()
 
-    output_dir = Path("build/results")
-    cache_path = Path("build/data/H-2.npy")
+    # Cada sinal recebe seu próprio diretório de resultados.
+    output_dir = Path("build/results") / args.measurements.stem
+
+    # O cache acompanha o nome da matriz utilizada.
+    matrix_name = args.matrix_zip.name
+    if matrix_name.endswith(".csv.zip"):
+        matrix_name = matrix_name[:-8]
+
+    cache_path = Path("build/data") / f"{matrix_name}.npy"
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

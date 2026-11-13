@@ -200,3 +200,26 @@ Também foram realizadas reconstruções com a matriz H-2 e dois conjuntos reais
 Os resultados demonstram redução dos resíduos e execução do algoritmo com os dados experimentais.
 
 O critério de convergência adotado não foi satisfeito dentro das 100 iterações dos experimentos realizados. Portanto, os resultados devem ser interpretados como soluções aproximadas obtidas dentro desse limite.
+## 11. Ajustes após revisão do Pull Request
+
+Após a revisão do PR #30, foram realizados os seguintes ajustes:
+
+- O limite padrão do CGNR foi definido como 10 iterações.
+- A inicialização com solução nula evita o produto desnecessário `H @ x`.
+- Foram acrescentadas verificações para evitar que underflow e
+  resultados numéricos não finitos sejam interpretados como convergência.
+- O script experimental passou a organizar os resultados em um
+  subdiretório identificado pelo nome do sinal.
+- Foram adicionados testes de regressão para o limite padrão e
+  para o caso de underflow identificado na revisão.
+
+### Sobre os experimentos anteriores
+
+Os experimentos com 30 e 100 iterações apresentados neste documento
+foram executados antes dos ajustes, com limites definidos explicitamente.
+
+Esses resultados permanecem registrados como análises exploratórias
+de convergência e não representam o limite padrão de execução.
+
+O algoritmo permite informar explicitamente outro limite de iterações
+para fins de experimentação. O valor padrão é 10.
