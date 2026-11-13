@@ -212,7 +212,7 @@ def main():
 
     # Salva os valores da solução.
     np.savetxt(
-        output_dir / "reconstruction_30x30.csv",
+        output_dir / f"reconstruction_{side}x{side}.csv",
         image,
         delimiter=",",
         fmt="%.12e",
@@ -226,7 +226,7 @@ def main():
     plt.axis("off")
     plt.tight_layout()
     plt.savefig(
-        output_dir / "reconstruction_30x30.png",
+        output_dir / f"reconstruction_{side}x{side}.png",
         dpi=160,
     )
     plt.close()
