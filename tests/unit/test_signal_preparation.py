@@ -56,7 +56,7 @@ def test_plan_is_reproducible(tmp_path):
     for entry in plan_a["sequence"]:
         prepared = prepare_entry(entry)
         assert prepared.shape == (3,)
-        assert np.sqrt(np.mean(prepared ** 2)) == pytest.approx(1.0)
+        assert 0.8 - 1e-10 <= np.sqrt(np.mean(prepared ** 2)) <= 1.2 + 1e-10
 
 
 def test_modified_signal_is_rejected(tmp_path):
@@ -93,7 +93,7 @@ def test_saved_plan_can_be_loaded_and_replayed(tmp_path):
 
     for entry in restored["sequence"]:
         prepared = prepare_entry(entry)
-        assert np.sqrt(np.mean(prepared ** 2)) == pytest.approx(2.0)
+        assert 1.6 - 1e-10 <= np.sqrt(np.mean(prepared ** 2)) <= 2.4 + 1e-10
 
 
 def test_invalid_saved_plan_is_rejected(tmp_path):
@@ -104,3 +104,93 @@ def test_invalid_saved_plan_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="versão"):
         load_plan(path)
+
+
+def test_gain_varies_between_repeated_transmissions(tmp_path):
+    path = tmp_path / "repeated.csv"
+    np.savetxt(path, [1.0, 2.0, 3.0], delimiter=",")
+
+    models = {"demo": [path]}
+
+    first = create_plan(
+        models,
+        seed=42,
+        count=15,
+        target_rms=2.0,
+    )
+
+    repeated = create_plan(
+        models,
+        seed=42,
+        count=15,
+        target_rms=2.0,
+    )
+
+    different_seed = create_plan(
+        models,
+        seed=43,
+        count=15,
+        target_rms=2.0,
+    )
+
+    first_gains = [
+        entry["gain"]
+        for entry in first["sequence"]
+    ]
+
+    repeated_gains = [
+        entry["gain"]
+        for entry in repeated["sequence"]
+    ]
+
+    different_gains = [
+        entry["gain"]
+        for entry in different_seed["sequence"]
+    ]
+
+    assert len(set(first_gains)) == 15
+    assert first_gains == repeated_gains
+    assert first_gains != different_gains
+
+    for entry in first["sequence"]:
+        prepared = prepare_entry(entry)
+        rms = float(np.sqrt(np.mean(prepared ** 2)))
+        assert 1.6 - 1e-10 <= rms <= 2.4 + 1e-10
+
+
+def test_gain_variation_can_be_configured(tmp_path):
+    path = tmp_path / "signal.csv"
+    np.savetxt(path, [1.0, 2.0, 3.0], delimiter=",")
+
+    plan = create_plan(
+        {"demo": [path]},
+        seed=10,
+        count=5,
+        target_rms=2.0,
+        gain_variation=(0.5, 1.5),
+    )
+
+    assert plan["gain_variation"] == [0.5, 1.5]
+
+    for entry in plan["sequence"]:
+        prepared = prepare_entry(entry)
+        rms = float(np.sqrt(np.mean(prepared ** 2)))
+        assert 1.0 - 1e-10 <= rms <= 3.0 + 1e-10
+
+
+def test_invalid_gain_variation_is_rejected(tmp_path):
+    path = tmp_path / "signal.csv"
+    np.savetxt(path, [1.0, 2.0, 3.0], delimiter=",")
+
+    for invalid in (
+        (0.0, 1.0),
+        (1.2, 0.8),
+        (float("nan"), 1.0),
+        (0.8,),
+    ):
+        with pytest.raises(ValueError, match="gain_variation"):
+            create_plan(
+                {"demo": [path]},
+                seed=42,
+                gain_variation=invalid,
+            )
