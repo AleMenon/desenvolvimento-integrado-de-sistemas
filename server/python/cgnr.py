@@ -28,6 +28,7 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
             solution: vetor solução.
             iterations: número de iterações executadas.
             converged: indica se o critério de parada foi atingido.
+            stop_reason: causa da interrupção do algoritmo.
             residual_norm: norma de ||g - Hx||.
             normal_residual_norm: norma de ||H.T @ (g - Hx)||.
             residual_history: histórico da norma do resíduo.
@@ -121,6 +122,7 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
             "solution": x,
             "iterations": 0,
             "converged": True,
+            "stop_reason": "tolerance_reached",
             "residual_norm": float(np.linalg.norm(r)),
             "normal_residual_norm": 0.0,
             "residual_history": residual_history,
@@ -128,6 +130,7 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
 
     converged = False
     iterations = 0
+    stop_reason = "max_iterations"
 
     # Um produto interno pode virar zero por underflow mesmo
     # quando o resíduo normal não é zero. Isso NÃO é convergência.
@@ -136,6 +139,7 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
             "solution": x,
             "iterations": 0,
             "converged": False,
+            "stop_reason": "numerical_breakdown",
             "residual_norm": float(np.linalg.norm(r)),
             "normal_residual_norm": initial_normal_norm,
             "residual_history": residual_history,
@@ -149,12 +153,14 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
 
         # Evita divisão por zero ou valores inválidos
         if denominator <= 0 or not np.isfinite(denominator):
+            stop_reason = "numerical_breakdown"
             break
 
         # Comprimento do passo
         alpha = gamma / denominator
 
         if not np.isfinite(alpha):
+            stop_reason = "numerical_breakdown"
             break
 
         # Verifica os candidatos antes de atualizar o estado.
@@ -165,6 +171,7 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
             not np.all(np.isfinite(new_x))
             or not np.all(np.isfinite(new_r))
         ):
+            stop_reason = "numerical_breakdown"
             break
 
         x = new_x
@@ -181,26 +188,31 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
         normal_norm = float(np.hypot.reduce(z_new))
 
         if not np.isfinite(normal_norm):
+            stop_reason = "numerical_breakdown"
             break
 
         # Critério de parada
         if normal_norm <= threshold:
             converged = True
+            stop_reason = "tolerance_reached"
             break
 
         # Evita divisões por zero e resultados não finitos.
         if gamma_new == 0.0 or not np.isfinite(gamma_new):
+            stop_reason = "numerical_breakdown"
             break
 
         # Atualização da direção conjugada
         beta = gamma_new / gamma
 
         if not np.isfinite(beta):
+            stop_reason = "numerical_breakdown"
             break
 
         new_p = z_new + beta * p
 
         if not np.all(np.isfinite(new_p)):
+            stop_reason = "numerical_breakdown"
             break
 
         p = new_p
@@ -212,13 +224,19 @@ def cgnr(h, g, x0=None, tolerance=1e-8, max_iterations=10):
 
     final_normal_norm = float(np.hypot.reduce(final_z))
 
-    if final_normal_norm <= threshold:
-        converged = True
+    if not np.isfinite(final_normal_norm):
+        converged = False
+        stop_reason = "numerical_breakdown"
+    elif stop_reason != "numerical_breakdown":
+        if final_normal_norm <= threshold:
+            converged = True
+            stop_reason = "tolerance_reached"
 
     return {
         "solution": x,
         "iterations": iterations,
         "converged": converged,
+        "stop_reason": stop_reason,
         "residual_norm": float(np.linalg.norm(final_r)),
         "normal_residual_norm": final_normal_norm,
         "residual_history": residual_history,
