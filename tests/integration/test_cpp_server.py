@@ -3,11 +3,13 @@
 Executar após compilar: uv run python -m pytest tests/integration/test_cpp_server.py -v
 """
 
+import json
 import os
 import socket
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -23,39 +25,96 @@ EXECUTABLE = Path(os.getenv("CPP_SERVER_BIN", str(ROOT / "build" / "reconstructi
 CATALOG = ROOT / "models" / "catalog.json"
 
 
-@pytest.fixture(scope="module")
-def server_url():
+@contextmanager
+def running_server(*, catalog=CATALOG, queue_capacity=64, extra_env=None):
+    """Inicia uma instância real do servidor com catálogo e fila configuráveis."""
     assert EXECUTABLE.exists(), f"Compile o servidor primeiro: {EXECUTABLE}"
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
     process = subprocess.Popen(
         [str(EXECUTABLE), "--host", "127.0.0.1", "--port", str(port),
-         "--catalog", str(CATALOG)],
-        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+         "--catalog", str(catalog), "--queue-capacity", str(queue_capacity)],
+        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env,
     )
     url = f"http://127.0.0.1:{port}"
     try:
-        for _ in range(100):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise AssertionError(f"Servidor encerrou: {process.stderr.read().decode()}")
+                raise AssertionError(
+                    f"Servidor encerrou: {process.stderr.read().decode()}"
+                )
             try:
                 if requests.get(url + "/health", timeout=0.2).status_code == 200:
                     break
             except requests.RequestException:
                 pass
-            time.sleep(0.05)
+            time.sleep(0.02)
         else:
             raise AssertionError("Servidor não iniciou dentro do prazo")
         yield url
     finally:
-        process.terminate()
+        if process.poll() is None:
+            process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
         process.stderr.close()
+
+
+@pytest.fixture(scope="module")
+def server_url():
+    with running_server() as url:
+        yield url
+
+
+def wait_for_status(client, request_id, expected, *, timeout=5):
+    """Aguarda transição observável, sem pressupor tempo de execução."""
+    deadline = time.monotonic() + timeout
+    last_status = None
+    while time.monotonic() < deadline:
+        last_status = client.get_status(request_id)
+        if last_status["status"] == expected:
+            return last_status
+        if last_status["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
+    pytest.fail(
+        f"requisição {request_id}: esperado {expected}, "
+        f"obtido {last_status}; verifique -DBUILD_TESTING=ON"
+    )
+
+
+@pytest.fixture
+def blocked_server(tmp_path):
+    """Trava o worker de modo determinístico apenas na compilação de testes."""
+    gate = tmp_path / "worker-gate.lock"
+    gate.touch()
+    try:
+        with running_server(
+            queue_capacity=1,
+            extra_env={"TASK13_TEST_GATE_FILE": str(gate)},
+        ) as url:
+            yield url, gate
+    finally:
+        gate.unlink(missing_ok=True)
+
+
+def submission_payload(signal_id):
+    return {
+        "client_id": "teste-async",
+        "signal_id": signal_id,
+        "model_id": "demo_identity_3",
+        "algorithm": "cgnr",
+        "signal": [1.0, 2.0, 3.0],
+        "parameters": {"max_iterations": 10, "tolerance": 1e-8},
+    }
 
 
 def test_health_and_models(server_url):
@@ -138,3 +197,88 @@ def test_invalid_json_and_missing_resource(server_url):
     assert requests.get(server_url + "/reconstructions/unknown", timeout=3).status_code == 404
     with pytest.raises(CommunicationError, match="404"):
         ReconstructionClient(server_url).get_result("unknown")
+
+
+def test_reconstruction_failure_from_numerical_breakdown(tmp_path):
+    """Uma matriz subnormal causa gamma == 0 e o estado deve ser failed."""
+    (tmp_path / "tiny.csv").write_text("1e-200\n", encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        json.dumps({"models": [{
+            "model_id": "tiny_model",
+            "file": "tiny.csv",
+            "image_shape": [1, 1],
+            "version": "test",
+        }]}),
+        encoding="utf-8",
+    )
+
+    with running_server(catalog=catalog) as url:
+        client = ReconstructionClient(url)
+        request_id = client.submit_signal(
+            "teste-falha", "sinal-subnormal", "tiny_model", [1.0]
+        )
+        status = wait_for_status(client, request_id, "failed")
+        assert status["error"]["code"] == "RECONSTRUCTION_FAILED"
+        assert status["started_at"] is not None
+        assert status["finished_at"] is not None
+        response = requests.get(
+            f"{url}/reconstructions/{request_id}/result", timeout=3
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "RESULT_NOT_READY"
+
+
+def test_result_not_ready_while_running_and_queued(blocked_server):
+    """Consulta antecipada deve retornar 409 nos dois estados pendentes."""
+    url, gate = blocked_server
+    client = ReconstructionClient(url)
+    running_id = client.submit_signal(
+        "teste-async", "sinal-running", "demo_identity_3", [1, 2, 3]
+    )
+    wait_for_status(client, running_id, "running")
+    queued_id = client.submit_signal(
+        "teste-async", "sinal-queued", "demo_identity_3", [1, 2, 3]
+    )
+    assert client.get_status(queued_id)["status"] == "queued"
+
+    for request_id in (running_id, queued_id):
+        response = requests.get(
+            f"{url}/reconstructions/{request_id}/result", timeout=3
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "RESULT_NOT_READY"
+
+    gate.unlink()
+    wait_for_status(client, running_id, "completed")
+    wait_for_status(client, queued_id, "completed")
+    assert client.get_result(queued_id)["status"] == "completed"
+
+
+def test_queue_full_rejects_only_new_jobs(blocked_server):
+    """Capacidade 1 refere-se a queued, excluindo o job running."""
+    url, gate = blocked_server
+    client = ReconstructionClient(url)
+    running_id = client.submit_signal(
+        "teste-async", "sinal-running", "demo_identity_3", [1, 2, 3]
+    )
+    wait_for_status(client, running_id, "running")
+    queued_id = client.submit_signal(
+        "teste-async", "sinal-queued", "demo_identity_3", [1, 2, 3]
+    )
+    assert client.get_status(queued_id)["status"] == "queued"
+
+    rejected = requests.post(
+        f"{url}/reconstructions", json=submission_payload("sinal-overflow"),
+        timeout=3,
+    )
+    assert rejected.status_code == 503
+    assert rejected.json()["error"]["code"] == "QUEUE_FULL"
+    assert client.get_status(running_id)["status"] == "running"
+    assert client.get_status(queued_id)["status"] == "queued"
+
+    gate.unlink()
+    wait_for_status(client, running_id, "completed")
+    wait_for_status(client, queued_id, "completed")
+    assert client.get_result(running_id)["status"] == "completed"
+    assert client.get_result(queued_id)["status"] == "completed"
