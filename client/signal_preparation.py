@@ -86,7 +86,14 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
-def create_plan(models, *, seed, count=15, target_rms=1.0):
+def create_plan(
+    models,
+    *,
+    seed,
+    count=15,
+    target_rms=1.0,
+    gain_variation=(0.8, 1.2),
+):
     """Seleciona modelo e sequência reproduzíveis.
 
     models: dicionário model_id -> lista de caminhos csv.
@@ -101,6 +108,28 @@ def create_plan(models, *, seed, count=15, target_rms=1.0):
     if not models:
         raise ValueError("nenhum modelo disponível")
 
+    if (
+        type(target_rms) not in (int, float)
+        or not math.isfinite(target_rms)
+        or target_rms <= 0
+    ):
+        raise ValueError("target_rms deve ser positivo e finito")
+
+    if (
+        not isinstance(gain_variation, (tuple, list))
+        or len(gain_variation) != 2
+        or any(
+            type(value) not in (int, float)
+            or not math.isfinite(value)
+            for value in gain_variation
+        )
+        or gain_variation[0] <= 0
+        or gain_variation[1] < gain_variation[0]
+    ):
+        raise ValueError(
+            "gain_variation deve conter limites positivos e ordenados"
+        )
+
     rng = np.random.default_rng(seed)
     model_ids = sorted(models)
     model_id = model_ids[int(rng.integers(len(model_ids)))]
@@ -113,7 +142,14 @@ def create_plan(models, *, seed, count=15, target_rms=1.0):
     for position in range(count):
         path = paths[int(rng.integers(len(paths)))]
         signal = load_signal(path)
-        gain = calculate_gain(signal, target_rms)
+
+        # Um novo RMS-alvo é sorteado para cada transmissão.
+        # O mesmo rng garante reprodução a partir da semente.
+        variation = float(
+            rng.uniform(gain_variation[0], gain_variation[1])
+        )
+        entry_target_rms = float(target_rms * variation)
+        gain = calculate_gain(signal, entry_target_rms)
 
         sequence.append({
             "position": position,
@@ -128,6 +164,7 @@ def create_plan(models, *, seed, count=15, target_rms=1.0):
         "schema_version": 1,
         "seed": seed,
         "target_rms": target_rms,
+        "gain_variation": list(gain_variation),
         "sequence": sequence,
     }
 

@@ -35,19 +35,51 @@ O identificador enviado pelo cliente deve corresponder ao `model_id` disponibili
 
 ## 4. Cálculo e Aplicação do Ganho
 
-A implementação atual utiliza uma proposta de normalização pela amplitude RMS (*Root Mean Square*).
+A implementação utiliza normalização pela amplitude RMS (*Root Mean Square*) e permite aplicar um ganho aleatório diferente a cada transmissão.
 
 Para um sinal com N amostras:
 
-    RMS = sqrt(sum(sinal[i]²) / N)
-    ganho = RMS_desejado / RMS_original
+    RMS_original = sqrt(sum(sinal[i]²) / N)
+
+Primeiro, o cliente seleciona um fator de variação aleatório:
+
+    fator = rng.uniform(gain_variation[0], gain_variation[1])
+
+Em seguida, calcula o RMS-alvo e o ganho daquela transmissão:
+
+    RMS_alvo = target_rms × fator
+    ganho = RMS_alvo / RMS_original
     sinal_preparado = sinal_original × ganho
 
-O valor padrão de `target_rms` é 1.0, podendo ser configurado na criação do plano.
+### 4.1 Ganhos Aleatórios
 
-Sinais nulos e ganhos inválidos são rejeitados.
+O parâmetro `target_rms` define o RMS de referência, com valor padrão de 1.0.
 
-**Observação:** a normalização por RMS é uma decisão técnica provisória. A fórmula precisa ser confirmada com a especificação do experimento antes da aprovação definitiva deste requisito.
+O parâmetro `gain_variation` define a faixa de variação do fator aleatório. O padrão é `(0.8, 1.2)`, correspondente a 80% até 120% do RMS de referência.
+
+Um novo fator é sorteado para cada posição da sequência, mesmo quando o mesmo arquivo de sinal é selecionado novamente.
+
+Dessa forma, transmissões repetidas podem receber ganhos diferentes.
+
+### 4.2 Reprodutibilidade
+
+O sorteio utiliza o mesmo gerador pseudoaleatório da seleção dos sinais, inicializado com a semente informada em `create_plan()`.
+
+Consequentemente:
+
+- A mesma semente e os mesmos arquivos produzem o mesmo plano.
+- Transmissões diferentes podem receber ganhos diferentes.
+- O ganho calculado é armazenado no plano JSON.
+- A reprodução de um plano salvo reutiliza os ganhos registrados, sem novos sorteios.
+- O SHA-256 permite verificar se os arquivos de origem foram alterados.
+
+### 4.3 Validação e Limitações
+
+A implementação rejeita sinais nulos, valores não finitos e parâmetros de ganho inválidos.
+
+Os limites de `gain_variation` devem ser numéricos, finitos, positivos e ordenados.
+
+**Observação:** a normalização RMS, a distribuição uniforme e a faixa de 80% a 120% são decisões técnicas provisórias. A fórmula e os parâmetros definitivos precisam ser confirmados com a especificação do professor.
 
 ## 5. Seleção Aleatória e Reprodutibilidade
 
@@ -59,7 +91,7 @@ A partir de uma semente fixa, o cliente:
 2. Seleciona aleatoriamente um modelo.
 3. Ordena os arquivos de sinais associados ao modelo.
 4. Seleciona uma sequência de sinais, permitindo repetição.
-5. Calcula o ganho correspondente a cada sinal.
+5. Sorteia um fator de variação e calcula o ganho de cada transmissão.
 6. Registra o plano experimental em JSON.
 
 A sequência padrão contém 15 sinais, mas a quantidade é configurável.
@@ -68,7 +100,8 @@ O plano registra:
 
 - Versão do formato (`schema_version`);
 - Semente aleatória (`seed`);
-- RMS desejado (`target_rms`);
+- RMS de referência (`target_rms`);
+- Limites de variação (`gain_variation`);
 - Posição de cada sinal na sequência;
 - Identificadores de modelo e sinal;
 - Caminho absoluto do arquivo CSV;
@@ -151,6 +184,9 @@ Os testes específicos da TASK-10 verificam:
 
 - Carregamento e validação de sinais CSV;
 - Cálculo e aplicação do ganho RMS;
+- Ganhos aleatórios por transmissão;
+- Reprodutibilidade dos ganhos com semente fixa;
+- Validação da faixa configurável de variação;
 - Rejeição de sinais nulos;
 - Seleção reproduzível com semente fixa;
 - Verificação de integridade dos arquivos;
@@ -165,13 +201,13 @@ Execução:
 
     OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run --locked python -m pytest tests/unit/test_signal_preparation.py tests/unit/test_experiment_runner.py tests/integration/test_task10_http.py -q
 
-Na última execução, os 12 testes específicos da TASK-10 foram aprovados.
+Na última execução, os 15 testes específicos da TASK-10 foram aprovados.
 
 Os testes HTTP utilizam duas instâncias do servidor mock da TASK-09. Portanto, validam o envio e o contrato de comunicação, mas não a equivalência numérica dos servidores CGNR reais.
 
 ## 10. Limitações e Próximas Validações
 
-- Confirmar a fórmula de ganho exigida pelo experimento.
+- Confirmar a fórmula, a distribuição e os limites de ganho exigidos pelo experimento.
 - Validar o fluxo ponta a ponta com os servidores Python e C++ reais.
 - Confirmar a identidade matemática dos modelos utilizados por ambas as implementações.
 - Disponibilizar localmente os sinais experimentais de grande porte.

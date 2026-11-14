@@ -71,4 +71,4 @@ def test_same_plan_over_two_http_servers(tmp_path):
             )
 
             vector = np.asarray(python_result["result"]["vector"])
-            assert np.sqrt(np.mean(vector ** 2)) == pytest.approx(2.0)
+            assert 1.6 - 1e-10 <= np.sqrt(np.mean(vector ** 2)) <= 2.4 + 1e-10
