@@ -44,39 +44,40 @@ Para conferir as métricas diretamente:
 curl -s http://127.0.0.1:8080/metrics | python -m json.tool
 ```
 
-## Python — integração na TASK-12
+## Python — integração com a TASK-12
 
-A implementação Python do servidor ainda não estava integrada à `main`/`task-13` no momento da TASK-16. O código a seguir **não substitui** o servidor da colega: são pontos de integração a aplicar onde a API, a fila e o executor forem definidos.
+A instrumentação está integrada ao servidor Python real em
+`server/python/reconstruction_server.py`.
 
-```python
-from fastapi import FastAPI
-from server.python.metrics_api import create_metrics_router
-from server.python.performance_metrics import PerformanceMetrics
+A aplicação FastAPI expõe `GET /metrics` e
+`GET /metrics/reconstructions`, reutilizando os componentes da TASK-16.
 
-app = FastAPI()
-metrics = PerformanceMetrics("python")
-app.include_router(create_metrics_router(metrics))
+A instância de `PerformanceMetrics("python")` é compartilhada pelo
+serviço de reconstrução e pelo router de métricas.
 
-# Após validar e inserir uma requisição na fila:
-metrics.accepted(request_id, client_id, signal_id, model_id)
+Eventos registrados:
 
-# Ao retirar da fila, antes do cálculo:
-metrics.started(request_id)
+1. `accepted`: somente após aceitação e inserção na fila.
+2. `started`: quando o worker inicia o processamento.
+3. `finished(success=True)`: reconstrução concluída.
+4. `finished(success=False)`: falha numérica ou falha de execução.
 
-# Ao finalizar o CGNR (reaproveite o tempo do algoritmo medido no servidor):
-metrics.finished(request_id, success=True, iterations=result["iterations"],
-                 converged=result["converged"],
-                 stop_reason="tolerance_reached" if result["converged"] else "max_iterations",
-                 execution_time_ms=elapsed_cgnr_ms)
+Requisições inválidas ou rejeitadas pela fila não são contabilizadas.
 
-# Em caso de erro, se já havia iniciado:
-# metrics.finished(request_id, success=False, stop_reason="reconstruction_failed",
-#                  execution_time_ms=elapsed_cgnr_ms)
-```
+O tempo `execution_time_ms` mede exclusivamente a chamada ao CGNR,
+inclusive quando o algoritmo lança uma exceção.
 
-**Importante:** não chame `accepted` antes de aceitar a requisição nem `started` antes de retirar a tarefa da fila. Os callbacks devem refletir **os mesmos eventos** utilizados para atualizar o estado HTTP do servidor. Não registre a mesma requisição duas vezes. Para falhas de validação rejeitadas antes do enfileiramento, não registre uma reconstrução. Para preservar o tempo exclusivo do algoritmo, meça `elapsed_cgnr_ms` com `time.perf_counter()` imediatamente ao redor de `cgnr()`.
+O campo `stop_reason` utiliza o valor retornado pelo CGNR,
+distinguindo `tolerance_reached`, `max_iterations` e
+`numerical_breakdown`. Falhas genéricas recebem
+`reconstruction_failed`.
 
-Quando a TASK-12 estiver integrada, inicie esse servidor Python e use o **mesmo comando do coletor**, trocando `--url`, `--pid` e `--output results/metrics/python`.
+A integração é verificada por testes HTTP reais em
+`tests/integration/test_python_metrics_integration.py`.
+
+A comparação experimental Python × C++ continua exigindo
+executar ambos os servidores com a mesma carga, parâmetros
+e condições de monitoramento.
 
 ## Arquivos exportados
 
