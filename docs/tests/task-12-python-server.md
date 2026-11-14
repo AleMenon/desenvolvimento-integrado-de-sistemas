@@ -515,3 +515,29 @@ O servidor Python implementa as operações HTTP necessárias para receber sinai
 A aceitação funcional foi verificada por testes reais HTTP utilizando a matriz de demonstração e o cliente da TASK-09.
 
 O processamento de matrizes experimentais reais, a persistência dos trabalhos e o gerenciamento avançado de concorrência não fazem parte desta validação inicial e permanecem documentados como limitações.
+
+
+## Tratamento de interrupções numéricas do CGNR
+
+O algoritmo CGNR Python informa explicitamente a causa de parada
+por meio do campo `stop_reason`:
+
+- `tolerance_reached`: convergência pelo critério de tolerância;
+- `max_iterations`: limite configurado de iterações atingido;
+- `numerical_breakdown`: interrupção por problema numérico,
+  como divisão inválida, underflow ou valores não finitos.
+
+O servidor registra reconstruções com `tolerance_reached` ou
+`max_iterations` como `completed`. Atingir o limite de iterações
+não implica necessariamente convergência.
+
+Quando ocorre `numerical_breakdown`, a requisição é registrada
+como `failed` e recebe o código de erro `NUMERICAL_BREAKDOWN`.
+Nesse caso, não é publicado um resultado de reconstrução concluída.
+
+O servidor também valida a coerência entre `converged`,
+`iterations` e `stop_reason`, rejeitando resultados inconsistentes.
+
+Os testes verificam a diferenciação entre convergência,
+limite de iterações e falha numérica, além da atualização
+do estado HTTP em um cenário simulado de interrupção.

@@ -264,3 +264,36 @@ def test_cgnr_underflow_does_not_report_convergence():
     assert result["iterations"] == 0
     assert result["residual_norm"] == 1.0
     assert result["normal_residual_norm"] > 0.0
+
+
+def test_cgnr_reports_numerical_breakdown_on_underflow():
+    """Um produto interno pode zerar sem o resíduo normal ser nulo."""
+    h = np.eye(3)
+    g = np.array([1e-200, 0.0, 0.0])
+
+    result = cgnr(h, g, max_iterations=10)
+
+    assert result["iterations"] == 0
+    assert result["converged"] is False
+    assert result["stop_reason"] == "numerical_breakdown"
+    assert result["normal_residual_norm"] > 0
+
+
+def test_cgnr_reports_tolerance_reached():
+    result = cgnr(np.eye(3), np.array([1.0, 2.0, 3.0]))
+
+    assert result["converged"] is True
+    assert result["stop_reason"] == "tolerance_reached"
+
+
+def test_cgnr_reports_iteration_limit():
+    result = cgnr(
+        np.diag([1.0, 2.0, 4.0]),
+        np.ones(3),
+        tolerance=1e-14,
+        max_iterations=1,
+    )
+
+    assert result["converged"] is False
+    assert result["iterations"] == 1
+    assert result["stop_reason"] == "max_iterations"

@@ -369,3 +369,53 @@ def test_missing_result(server_url):
     assert response.json()["error"]["code"] == (
         "REQUEST_NOT_FOUND"
     )
+
+
+def test_numerical_breakdown_marks_reconstruction_failed(
+    client, monkeypatch
+):
+    """O servidor não pode classificar breakdown como completed."""
+    from server.python import reconstruction_server
+
+    def fake_cgnr(_matrix, _signal, **_kwargs):
+        return {
+            "solution": np.zeros(3, dtype=np.float64),
+            "iterations": 0,
+            "converged": False,
+            "stop_reason": "numerical_breakdown",
+            "residual_norm": 1.0,
+            "normal_residual_norm": 1.0,
+            "residual_history": [1.0],
+        }
+
+    monkeypatch.setattr(
+        reconstruction_server,
+        "cgnr",
+        fake_cgnr,
+    )
+
+    request_id = client.submit_signal(
+        client_id="cliente-breakdown",
+        signal_id="sinal-breakdown",
+        model_id="demo_identity_3",
+        signal=[1.0, 2.0, 3.0],
+        max_iterations=10,
+        tolerance=1e-8,
+    )
+
+    deadline = time.monotonic() + 5
+
+    while True:
+        status = client.get_status(request_id)
+
+        if status["status"] in ("completed", "failed"):
+            break
+
+        if time.monotonic() >= deadline:
+            pytest.fail("Reconstrução não terminou em 5 segundos.")
+
+        time.sleep(0.01)
+
+    assert status["status"] == "failed"
+    assert status["error"]["code"] == "NUMERICAL_BREAKDOWN"
+    assert status["error"]["stop_reason"] == "numerical_breakdown"

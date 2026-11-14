@@ -337,11 +337,49 @@ class ReconstructionService:
                     )
 
                 converged = bool(result["converged"])
-                stop_reason = (
-                    "tolerance_reached"
-                    if converged
-                    else "max_iterations"
-                )
+                stop_reason = result["stop_reason"]
+                iterations = int(result["iterations"])
+
+                if stop_reason not in (
+                    "tolerance_reached",
+                    "max_iterations",
+                    "numerical_breakdown",
+                ):
+                    raise ValueError(
+                        "Causa de parada desconhecida no CGNR."
+                    )
+
+                if iterations < 0 or iterations > task["max_iterations"]:
+                    raise ValueError(
+                        "Contagem de iterações inválida no CGNR."
+                    )
+
+                if converged != (stop_reason == "tolerance_reached"):
+                    raise ValueError(
+                        "Estado de convergência inconsistente no CGNR."
+                    )
+
+                if (
+                    stop_reason == "max_iterations"
+                    and iterations != task["max_iterations"]
+                ):
+                    raise ValueError(
+                        "CGNR terminou antes do limite sem convergir."
+                    )
+
+                if stop_reason == "numerical_breakdown":
+                    with self.lock:
+                        job["status"] = "failed"
+                        job["finished_at"] = utc_now()
+                        job["error"] = {
+                            "code": "NUMERICAL_BREAKDOWN",
+                            "message": (
+                                "O CGNR foi interrompido por "
+                                "uma falha numérica."
+                            ),
+                            "stop_reason": "numerical_breakdown",
+                        }
+                    continue
 
                 finished_at = utc_now()
 
@@ -362,7 +400,7 @@ class ReconstructionService:
                         ],
                         "algorithm": "cgnr",
                         "implementation": "python",
-                        "iterations": int(result["iterations"]),
+                        "iterations": iterations,
                         "converged": converged,
                         "stop_reason": stop_reason,
                         "residual_norm": residual_norm,
