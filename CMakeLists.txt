@@ -82,3 +82,8 @@ endif()
 add_executable(reconstruction_server server/cpp/reconstruction_server.cpp)
 target_include_directories(reconstruction_server PRIVATE "${CPP_HTTPLIB_INCLUDE_DIR}")
 target_link_libraries(reconstruction_server PRIVATE cgnr nlohmann_json::nlohmann_json Threads::Threads)
+# TASK-08 — Validação experimental com matrizes reais.
+add_executable(cgnr_experiment_runner
+    tests/integration/cgnr_experiment_runner.cpp
+)
+target_link_libraries(cgnr_experiment_runner PRIVATE cgnr)
