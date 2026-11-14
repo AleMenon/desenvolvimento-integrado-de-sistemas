@@ -19,6 +19,8 @@ def submit_plan_to_servers(
     client_id="cliente-01",
     max_iterations=10,
     tolerance=1e-8,
+    before_submit=None,
+    signal_id_prefix="",
 ):
     """Envia os mesmos sinais e parâmetros aos dois servidores.
 
@@ -79,7 +81,7 @@ def submit_plan_to_servers(
     submissions = []
 
     for entry, signal in prepared:
-        signal_id = f"{entry['signal_id']}-{entry['position']:03d}"
+        signal_id = f"{signal_id_prefix}{entry['signal_id']}-{entry['position']:03d}"
 
         record = {
             "position": entry["position"],
@@ -91,6 +93,9 @@ def submit_plan_to_servers(
         }
 
         try:
+            if before_submit is not None:
+                before_submit(entry)
+
             record["python_request_id"] = python_client.submit_signal(
                 client_id,
                 signal_id,
