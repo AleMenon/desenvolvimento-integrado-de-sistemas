@@ -19,6 +19,8 @@ from fastapi.responses import JSONResponse
 
 from server.python.cgnr import cgnr
 from server.python.model_catalog import ModelCatalog
+from server.python.metrics_api import create_metrics_router
+from server.python.performance_metrics import PerformanceMetrics
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,8 +56,11 @@ def error_response(status, code, message):
 class ReconstructionService:
     """Gerencia reconstruções e executa CGNR em um worker dedicado."""
 
-    def __init__(self, catalog_path, queue_capacity=QUEUE_CAPACITY):
+    def __init__(
+        self, catalog_path, queue_capacity=QUEUE_CAPACITY, metrics=None
+    ):
         self.catalog = ModelCatalog(catalog_path)
+        self.metrics = metrics if metrics is not None else PerformanceMetrics('python')
         self.jobs = {}
         self.lock = threading.Lock()
 
@@ -263,6 +268,12 @@ class ReconstructionService:
                 )
 
             self.jobs[request_id] = job
+            self.metrics.accepted(
+                request_id,
+                job['client_id'],
+                job['signal_id'],
+                job['model_id'],
+            )
 
         return (
             {
@@ -287,20 +298,24 @@ class ReconstructionService:
                 job = self.jobs[request_id]
                 job["status"] = "running"
                 job["started_at"] = utc_now()
+                self.metrics.started(request_id)
 
-            start = time.perf_counter()
+            duration_ms = None
+            metrics_finished = False
 
             try:
-                result = cgnr(
-                    task["model"]["matrix"],
-                    task["signal"],
-                    max_iterations=task["max_iterations"],
-                    tolerance=task["tolerance"],
-                )
-
-                duration_ms = (
-                    time.perf_counter() - start
-                ) * 1000.0
+                cgnr_start = time.perf_counter()
+                try:
+                    result = cgnr(
+                        task["model"]["matrix"],
+                        task["signal"],
+                        max_iterations=task["max_iterations"],
+                        tolerance=task["tolerance"],
+                    )
+                finally:
+                    duration_ms = (
+                        time.perf_counter() - cgnr_start
+                    ) * 1000.0
 
                 solution = np.asarray(
                     result["solution"],
@@ -379,6 +394,15 @@ class ReconstructionService:
                             ),
                             "stop_reason": "numerical_breakdown",
                         }
+                        self.metrics.finished(
+                            request_id,
+                            success=False,
+                            iterations=iterations,
+                            converged=False,
+                            stop_reason=stop_reason,
+                            execution_time_ms=duration_ms,
+                        )
+                        metrics_finished = True
                     continue
 
                 finished_at = utc_now()
@@ -417,6 +441,15 @@ class ReconstructionService:
                     job["result"] = response
                     job["status"] = "completed"
                     job["finished_at"] = finished_at
+                    self.metrics.finished(
+                        request_id,
+                        success=True,
+                        iterations=iterations,
+                        converged=converged,
+                        stop_reason=stop_reason,
+                        execution_time_ms=duration_ms,
+                    )
+                    metrics_finished = True
 
             except Exception:
                 with self.lock:
@@ -426,6 +459,14 @@ class ReconstructionService:
                         "code": "RECONSTRUCTION_FAILED",
                         "message": "Erro ao executar a reconstrução.",
                     }
+                    if not metrics_finished:
+                        self.metrics.finished(
+                            request_id,
+                            success=False,
+                            stop_reason="reconstruction_failed",
+                            execution_time_ms=duration_ms,
+                        )
+                        metrics_finished = True
 
             finally:
                 self.pending.task_done()
@@ -441,12 +482,15 @@ class ReconstructionService:
 def create_app(catalog_path=DEFAULT_CATALOG):
     """Cria a aplicação FastAPI com um catálogo configurável."""
     service = None
+    metrics = PerformanceMetrics('python')
 
     @asynccontextmanager
     async def lifespan(_app):
         nonlocal service
 
-        service = ReconstructionService(catalog_path)
+        service = ReconstructionService(
+            catalog_path, metrics=metrics
+        )
         _app.state.reconstruction_service = service
 
         try:
@@ -461,6 +505,8 @@ def create_app(catalog_path=DEFAULT_CATALOG):
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    app.include_router(create_metrics_router(metrics))
 
     @app.get("/health")
     def health():
