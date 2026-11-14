@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -217,9 +218,15 @@ struct Job {
 
 class ReconstructionServer {
 public:
-    ReconstructionServer(const fs::path& catalog, std::size_t queue_capacity)
+    ReconstructionServer(const fs::path& catalog, std::size_t queue_capacity,
+                         std::size_t worker_count, std::size_t max_retained_results,
+                         double result_ttl_seconds)
         : models_(load_models(catalog)), queue_capacity_(queue_capacity),
-          worker_(&ReconstructionServer::work, this) {}
+          worker_count_(worker_count), max_retained_results_(max_retained_results),
+          result_ttl_seconds_(result_ttl_seconds) {
+        for (std::size_t i = 0; i < worker_count_; ++i)
+            workers_.emplace_back(&ReconstructionServer::work, this);
+    }
 
     ~ReconstructionServer() {
         {
@@ -227,7 +234,8 @@ public:
             stopping_ = true;
         }
         wake_.notify_all();
-        worker_.join();
+        // Drain all accepted work on ordinary destruction.
+        for (auto& worker : workers_) worker.join();
     }
 
     void configure_routes(httplib::Server& http) {
@@ -243,10 +251,23 @@ public:
             json records = json::array();
             {
                 std::lock_guard<std::mutex> guard(mutex_);
+                prune_completed_locked(SteadyClock::now());
                 for (const auto& pair : jobs_) records.push_back(pair.second->metrics_json());
             }
             respond(res, 200, {{"schema_version", 1}, {"implementation", "cpp"},
                                {"reconstructions", std::move(records)}});
+        });
+        http.Get("/queue", [this](const httplib::Request&, httplib::Response& res) {
+            std::lock_guard<std::mutex> guard(mutex_);
+            prune_completed_locked(SteadyClock::now());
+            respond(res, 200, {{"implementation", "cpp"}, {"queue_policy", "fifo"},
+                              {"queue_capacity", queue_capacity_}, {"queue_size", queue_.size()},
+                              {"queue_peak", queue_peak_}, {"worker_count", worker_count_},
+                              {"running_count", running_count_}, {"accepted_count", accepted_count_},
+                              {"completed_count", completed_count_}, {"failed_count", failed_count_},
+                              {"rejected_count", rejected_count_},
+                              {"retained_results", completed_fifo_.size()},
+                              {"evicted_count", evicted_count_}});
         });
         http.Get("/models", [this](const httplib::Request&, httplib::Response& res) {
             json list = json::array();
@@ -314,7 +335,7 @@ private:
         }
         return {{"schema_version", 1}, {"implementation", "cpp"},
                 {"timestamp_utc", utc_now()}, {"uptime_ms", uptime_ms},
-                {"received_count", jobs_.size()}, {"completed_count", completed_count_},
+                {"received_count", accepted_count_}, {"completed_count", completed_count_},
                 {"failed_count", failed_count_}, {"running_count", running_count_},
                 {"queue_size", queue_.size()},
                 {"queue_mean", uptime_ms > 0 ? weighted_queue_ms_ / uptime_ms : 0.0},
@@ -323,8 +344,30 @@ private:
                     completed_count_ ? json(completed_duration_ms_ / completed_count_) : json(nullptr)}};
     }
 
+    using SteadyClock = std::chrono::steady_clock;
+
+    // Only terminal jobs are eligible for eviction; persistent counters survive.
+    void prune_completed_locked(SteadyClock::time_point now) {
+        while (!completed_fifo_.empty()) {
+            const auto& oldest = completed_fifo_.front();
+            const bool expired = std::chrono::duration<double>(now - oldest.first).count()
+                >= result_ttl_seconds_;
+            if (!expired && completed_fifo_.size() <= max_retained_results_)
+                break;
+            const auto id = oldest.second;
+            completed_fifo_.pop_front();
+            if (jobs_.erase(id)) ++evicted_count_;
+        }
+    }
+
+    void retain_finished_locked(const std::shared_ptr<Job>& job) {
+        completed_fifo_.emplace_back(SteadyClock::now(), job->id);
+        prune_completed_locked(SteadyClock::now());
+    }
+
     std::shared_ptr<Job> find_job(const std::string& id) {
         std::lock_guard<std::mutex> guard(mutex_);
+        prune_completed_locked(SteadyClock::now());
         const auto it = jobs_.find(id);
         return it == jobs_.end() ? nullptr : it->second;
     }
@@ -388,11 +431,18 @@ private:
         job->id = "req-" + std::to_string(stamp) + "-" + std::to_string(next_id_.fetch_add(1));
         {
             std::lock_guard<std::mutex> guard(mutex_);
-            if (queue_.size() >= queue_capacity_)
+            if (stopping_)
+                return error(res, 503, "SERVER_SHUTTING_DOWN", "Servidor em encerramento");
+            if (queue_.size() >= queue_capacity_) {
+                ++rejected_count_;
                 return error(res, 503, "QUEUE_FULL", "Fila temporariamente cheia");
+            }
             accrue_queue_until(std::chrono::steady_clock::now());
+            prune_completed_locked(SteadyClock::now());
             jobs_.emplace(job->id, job);
             queue_.push_back(job);
+            ++accepted_count_;
+            queue_peak_ = std::max(queue_peak_, queue_.size());
         }
         wake_.notify_one();
         respond(res, 202, {{"request_id", job->id}, {"status", "queued"},
@@ -466,6 +516,7 @@ private:
                 --running_count_;
                 ++completed_count_;
                 completed_duration_ms_ += duration;
+                retain_finished_locked(job);
             } catch (const std::exception&) {
                 std::lock_guard<std::mutex> guard(mutex_);
                 job->finished_at = utc_now();
@@ -477,12 +528,16 @@ private:
                 job->status = "failed";
                 --running_count_;
                 ++failed_count_;
+                retain_finished_locked(job);
             }
         }
     }
 
     const std::unordered_map<std::string, std::shared_ptr<const Model>> models_;
     const std::size_t queue_capacity_;
+    const std::size_t worker_count_;
+    const std::size_t max_retained_results_;
+    const double result_ttl_seconds_;
     // Metrics use a monotonic clock, never the system clock for durations.
     const std::chrono::steady_clock::time_point started_{std::chrono::steady_clock::now()};
     std::chrono::steady_clock::time_point last_queue_update_{started_};
@@ -493,14 +548,36 @@ private:
     std::size_t failed_count_ = 0;
     std::size_t running_count_ = 0;
     double completed_duration_ms_ = 0.0;
+    std::size_t queue_peak_ = 0;
+    std::uint64_t accepted_count_ = 0;
+    std::uint64_t rejected_count_ = 0;
+    std::uint64_t evicted_count_ = 0;
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::shared_ptr<Job>> queue_;
     std::unordered_map<std::string, std::shared_ptr<Job>> jobs_;
+    std::deque<std::pair<SteadyClock::time_point, std::string>> completed_fifo_;
     std::atomic<std::uint64_t> next_id_{0};
     bool stopping_ = false;
-    std::thread worker_;
+    std::vector<std::thread> workers_;
 };
+
+std::size_t parse_positive_size(const std::string& value, std::size_t maximum) {
+    std::size_t used = 0;
+    const auto parsed = std::stoull(value, &used);
+    if (used != value.size() || value.empty() || value[0] == '-'
+        || parsed == 0 || parsed > maximum)
+        throw std::invalid_argument("Valor inteiro fora do intervalo permitido: " + value);
+    return static_cast<std::size_t>(parsed);
+}
+
+double parse_positive_seconds(const std::string& value) {
+    std::size_t used = 0;
+    const auto parsed = std::stod(value, &used);
+    if (used != value.size() || !std::isfinite(parsed) || parsed <= 0)
+        throw std::invalid_argument("Tempo de retenção deve ser finito e positivo");
+    return parsed;
+}
 
 int parse_port(const std::string& argument) {
     std::size_t used = 0;
@@ -517,12 +594,17 @@ int main(int argc, char** argv) {
     std::string catalog = "models/catalog.json";
     int port = 8080;
     std::size_t queue_capacity = 64;
+    std::size_t worker_count = 1;
+    std::size_t max_retained_results = 1024;
+    double result_ttl_seconds = 3600.0;
     try {
         for (int i = 1; i < argc; ++i) {
             const std::string arg(argv[i]);
             if (arg == "--help") {
                 std::cout << "Uso: reconstruction_server [--host IP] [--port PORTA]"
-                          << " [--catalog ARQUIVO] [--queue-capacity N]\n";
+                          << " [--catalog ARQUIVO] [--queue-capacity N]"
+                          << " [--workers N] [--max-retained-results N]"
+                          << " [--result-ttl-seconds SEGUNDOS]\n";
                 return 0;
             }
             if (i + 1 >= argc) throw std::invalid_argument("Argumento sem valor: " + arg);
@@ -530,15 +612,16 @@ int main(int argc, char** argv) {
             if (arg == "--host") host = value;
             else if (arg == "--port") port = parse_port(value);
             else if (arg == "--catalog") catalog = value;
-            else if (arg == "--queue-capacity") {
-                std::size_t used = 0;
-                const auto count = std::stoull(value, &used);
-                if (used != value.size() || count == 0 || count > 100000)
-                    throw std::invalid_argument("Capacidade da fila inválida");
-                queue_capacity = static_cast<std::size_t>(count);
-            } else throw std::invalid_argument("Opção desconhecida: " + arg);
+            else if (arg == "--queue-capacity") queue_capacity = parse_positive_size(value, 100000);
+            else if (arg == "--workers") worker_count = parse_positive_size(value, 32);
+            else if (arg == "--max-retained-results")
+                max_retained_results = parse_positive_size(value, 100000);
+            else if (arg == "--result-ttl-seconds")
+                result_ttl_seconds = parse_positive_seconds(value);
+            else throw std::invalid_argument("Opção desconhecida: " + arg);
         }
-        ReconstructionServer reconstruction(catalog, queue_capacity);
+        ReconstructionServer reconstruction(
+            catalog, queue_capacity, worker_count, max_retained_results, result_ttl_seconds);
         httplib::Server http;
         reconstruction.configure_routes(http);
         std::cout << "Servidor C++ em http://" << host << ':' << port << std::endl;

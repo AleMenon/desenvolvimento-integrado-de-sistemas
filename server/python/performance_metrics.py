@@ -35,6 +35,7 @@ class PerformanceMetrics:
         self._queue_durations: dict[int, float] = defaultdict(float, {0: 0.0})
         self._queue_size = 0
         self._jobs: dict[str, dict[str, Any]] = {}
+        self._received_count = 0
         self._running_starts: dict[str, float] = {}
         self._completed_count = 0
         self._failed_count = 0
@@ -68,6 +69,7 @@ class PerformanceMetrics:
                 "stop_reason": None,
             }
             self._queue_size += 1
+            self._received_count += 1
 
     def started(self, request_id: str) -> None:
         with self._lock:
@@ -116,6 +118,13 @@ class PerformanceMetrics:
                 "stop_reason": stop_reason,
             })
 
+    def forget(self, request_id: str) -> None:
+        # Drop only terminal jobs, preserving accumulated counters.
+        with self._lock:
+            job = self._jobs.get(request_id)
+            if job is not None and job["status"] in ("completed", "failed"):
+                del self._jobs[request_id]
+
     def snapshot(self) -> dict:
         with self._lock:
             now = monotonic()
@@ -127,7 +136,7 @@ class PerformanceMetrics:
                 "implementation": self.implementation,
                 "timestamp_utc": utc_now(),
                 "uptime_ms": uptime * 1000,
-                "received_count": len(self._jobs),
+                "received_count": self._received_count,
                 "completed_count": self._completed_count,
                 "failed_count": self._failed_count,
                 "running_count": self._running_count,

@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from server.python.cgnr import cgnr
 from server.python.model_catalog import ModelCatalog
+from server.python.queue_control import QueueControl
 from server.python.metrics_api import create_metrics_router
 from server.python.performance_metrics import PerformanceMetrics
 
@@ -57,8 +58,15 @@ class ReconstructionService:
     """Gerencia reconstruções e executa CGNR em um worker dedicado."""
 
     def __init__(
-        self, catalog_path, queue_capacity=QUEUE_CAPACITY, metrics=None
+        self, catalog_path, queue_capacity=QUEUE_CAPACITY, metrics=None, *,
+        worker_count=1, max_retained_results=1024,
+        result_ttl_seconds=3600.0,
     ):
+        self.queue_control = QueueControl(
+            queue_capacity=queue_capacity, worker_count=worker_count,
+            max_retained_results=max_retained_results,
+            result_ttl_seconds=result_ttl_seconds,
+        )
         self.catalog = ModelCatalog(catalog_path)
         self.metrics = metrics if metrics is not None else PerformanceMetrics('python')
         self.jobs = {}
@@ -67,21 +75,31 @@ class ReconstructionService:
         self.pending = queue.Queue(maxsize=queue_capacity)
         self.stopping = threading.Event()
 
-        self.worker = threading.Thread(
-            target=self._worker_loop,
-            name="python-cgnr-worker",
-            daemon=True,
-        )
-        self.worker.start()
+        self.workers = [
+            threading.Thread(target=self._worker_loop,
+                             name=f"python-cgnr-worker-{index}", daemon=True)
+            for index in range(worker_count)
+        ]
+        self.worker = self.workers[0]  # backward-compatible TASK-12 attribute
+        for worker in self.workers:
+            worker.start()
 
     def get_job(self, request_id):
         with self.lock:
+            for evicted_id in self.queue_control.prune(self.jobs):
+                self.metrics.forget(evicted_id)
             job = self.jobs.get(request_id)
 
             if job is None:
                 return None
 
             return dict(job)
+
+    def queue_snapshot(self):
+        with self.lock:
+            for evicted_id in self.queue_control.prune(self.jobs):
+                self.metrics.forget(evicted_id)
+            return self.queue_control.snapshot(self.pending.qsize(), self.jobs)
 
     def submit(self, payload):
         """Valida e registra uma reconstrução.
@@ -257,6 +275,7 @@ class ReconstructionService:
             try:
                 self.pending.put_nowait(task)
             except queue.Full:
+                self.queue_control.rejected()
                 return (
                     {
                         "error": {
@@ -274,6 +293,9 @@ class ReconstructionService:
                 job['signal_id'],
                 job['model_id'],
             )
+            self.queue_control.accepted(self.pending.qsize())
+            for evicted_id in self.queue_control.prune(self.jobs):
+                self.metrics.forget(evicted_id)
 
         return (
             {
@@ -299,6 +321,7 @@ class ReconstructionService:
                 job["status"] = "running"
                 job["started_at"] = utc_now()
                 self.metrics.started(request_id)
+                self.queue_control.started()
 
             duration_ms = None
             metrics_finished = False
@@ -403,6 +426,10 @@ class ReconstructionService:
                             execution_time_ms=duration_ms,
                         )
                         metrics_finished = True
+                        for evicted_id in self.queue_control.finished(
+                            request_id, success=False, jobs=self.jobs
+                        ):
+                            self.metrics.forget(evicted_id)
                     continue
 
                 finished_at = utc_now()
@@ -450,6 +477,10 @@ class ReconstructionService:
                         execution_time_ms=duration_ms,
                     )
                     metrics_finished = True
+                    for evicted_id in self.queue_control.finished(
+                        request_id, success=True, jobs=self.jobs
+                    ):
+                        self.metrics.forget(evicted_id)
 
             except Exception:
                 with self.lock:
@@ -467,6 +498,10 @@ class ReconstructionService:
                             execution_time_ms=duration_ms,
                         )
                         metrics_finished = True
+                        for evicted_id in self.queue_control.finished(
+                            request_id, success=False, jobs=self.jobs
+                        ):
+                            self.metrics.forget(evicted_id)
 
             finally:
                 self.pending.task_done()
@@ -476,10 +511,14 @@ class ReconstructionService:
         with self.lock:
             self.stopping.set()
 
-        self.worker.join(timeout=10)
+        # Normal shutdown drains every accepted task; it can take longer than 10s.
+        for worker in self.workers:
+            worker.join()
 
 
-def create_app(catalog_path=DEFAULT_CATALOG):
+def create_app(catalog_path=DEFAULT_CATALOG, *, worker_count=1,
+               queue_capacity=QUEUE_CAPACITY, max_retained_results=1024,
+               result_ttl_seconds=3600.0):
     """Cria a aplicação FastAPI com um catálogo configurável."""
     service = None
     metrics = PerformanceMetrics('python')
@@ -489,7 +528,10 @@ def create_app(catalog_path=DEFAULT_CATALOG):
         nonlocal service
 
         service = ReconstructionService(
-            catalog_path, metrics=metrics
+            catalog_path, metrics=metrics,
+            queue_capacity=queue_capacity, worker_count=worker_count,
+            max_retained_results=max_retained_results,
+            result_ttl_seconds=result_ttl_seconds,
         )
         _app.state.reconstruction_service = service
 
@@ -511,6 +553,10 @@ def create_app(catalog_path=DEFAULT_CATALOG):
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/queue")
+    def get_queue_state():
+        return service.queue_snapshot()
 
     @app.get("/models")
     def list_models():
@@ -640,5 +686,9 @@ def create_app(catalog_path=DEFAULT_CATALOG):
 
 
 app = create_app(
-    os.environ.get("RECONSTRUCTION_CATALOG", str(DEFAULT_CATALOG))
+    os.environ.get("RECONSTRUCTION_CATALOG", str(DEFAULT_CATALOG)),
+    worker_count=int(os.environ.get("RECONSTRUCTION_WORKERS", "1")),
+    queue_capacity=int(os.environ.get("RECONSTRUCTION_QUEUE_CAPACITY", "64")),
+    max_retained_results=int(os.environ.get("RECONSTRUCTION_MAX_RESULTS", "1024")),
+    result_ttl_seconds=float(os.environ.get("RECONSTRUCTION_RESULT_TTL_SECONDS", "3600")),
 )
