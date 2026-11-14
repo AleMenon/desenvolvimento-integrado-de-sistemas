@@ -179,21 +179,34 @@ class Collector:
         sample_queues = [sample["queue_size"] for sample in self.samples]
         peak_cpus = [sample["cpu_percent"] for sample in self.samples if sample["cpu_percent"] is not None]
         most_common_queue = Counter(sample_queues)
+        inflight_at_start = self.initial["queue_size"] + self.initial["running_count"]
+        unfinished_at_end = self.final["queue_size"] + self.final["running_count"]
+        # A duration/throughput value is only comparable for a complete workload.
+        # If collection cuts through a job, report counts/samples but not a
+        # misleading duration computed from the small finished subset.
+        workload_complete = (
+            received > 0
+            and inflight_at_start == 0
+            and unfinished_at_end == 0
+            and received == completed + failed
+            and len(reconstructions) == completed + failed
+        )
         workload_duration_ms = None
-        valid_jobs = [j for j in reconstructions if j.get("created_at") and j.get("finished_at")]
-        if valid_jobs:
-            first_arrival = min(utc_parse(job["created_at"]) for job in valid_jobs)
-            final_completion = max(utc_parse(job["finished_at"]) for job in valid_jobs)
+        if workload_complete:
+            first_arrival = min(utc_parse(job["created_at"]) for job in reconstructions)
+            final_completion = max(utc_parse(job["finished_at"]) for job in reconstructions)
             workload_duration_ms = max(0.0, (final_completion - first_arrival).total_seconds() * 1000)
         summary = {
             "schema_version": 1,
             "implementation": self.initial["implementation"],
             "total_execution_time_ms": workload_duration_ms,
+            "workload_complete": workload_complete,
+            "inflight_at_start": inflight_at_start,
             "monitoring_window_ms": elapsed * 1000,
             "received_count": received,
             "completed_count": completed,
             "failed_count": failed,
-            "unfinished_count_at_end": self.final["queue_size"] + self.final["running_count"],
+            "unfinished_count_at_end": unfinished_at_end,
             "mean_reconstruction_time_ms": sum(times) / len(times) if times else None,
             "images_per_second": (completed * 1000 / workload_duration_ms)
                 if workload_duration_ms and completed else None,

@@ -84,3 +84,52 @@ def test_collector_exports_compatible_files(tmp_path, implementation):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("previous_pending", [False, True])
+def test_collector_rejects_partial_window_for_workload_duration(
+    tmp_path, previous_pending
+):
+    """Counts remain usable, but duration/throughput require a complete run."""
+    registry = PerformanceMetrics("python")
+    if previous_pending:
+        registry.accepted("preexisting", "c", "old", "model")
+        registry.started("preexisting")
+
+    collector = Collector("http://127.0.0.1:1", os.getpid(), tmp_path,
+                          interval=0.01)
+
+    def response(path):
+        return registry.snapshot() if path == "/metrics" else registry.reconstructions()
+
+    collector._get = response
+
+    def workload():
+        # Wait for the initial snapshot, regardless of thread scheduling.
+        deadline = time.monotonic() + 3
+        while (collector.initial is None or not collector.samples) and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert collector.initial is not None and collector.samples
+        registry.accepted("new", "c", "new", "model")
+        registry.started("new")
+        if previous_pending:
+            registry.finished("new", success=True, execution_time_ms=5)
+        # Otherwise leave "new" running when the window closes.
+
+    thread = threading.Thread(target=workload)
+    thread.start()
+    try:
+        summary = collector.run(duration=0.12)
+    finally:
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert summary["workload_complete"] is False
+    assert summary["inflight_at_start"] == int(previous_pending)
+    assert summary["unfinished_count_at_end"] == 1
+    assert summary["received_count"] == 1
+    assert summary["completed_count"] == int(previous_pending)
+    assert summary["total_execution_time_ms"] is None
+    assert summary["images_per_second"] is None
+    assert summary["reconstruction_rows_exported"] == int(previous_pending)
+    exported = json.loads((tmp_path / "summary.json").read_text())
+    assert exported["workload_complete"] is False

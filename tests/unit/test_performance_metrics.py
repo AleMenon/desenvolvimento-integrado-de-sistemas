@@ -62,3 +62,30 @@ def test_same_schema_for_both_server_types():
     assert set(a.snapshot()) == set(b.snapshot())
     assert set(a.reconstructions()) == set(b.reconstructions())
     assert a.reconstructions()["reconstructions"] == b.reconstructions()["reconstructions"]
+
+
+def test_incremental_snapshot_does_not_scan_job_history():
+    """Consultas frequentes permanecem independentes do tamanho de _jobs."""
+    registry = PerformanceMetrics()
+    registry.accepted("a", "c", "a", "m")
+    registry.accepted("b", "c", "b", "m")
+    registry.started("a")
+    registry.finished("a", success=True, execution_time_ms=10)
+    registry.started("b")
+    registry.finished("b", success=False, execution_time_ms=20)
+
+    # Substituir o mapa por um dict que falha se snapshot iterar seus valores.
+    class NoScanDict(dict):
+        def values(self):
+            raise AssertionError("snapshot must not scan job history")
+
+        def __iter__(self):
+            raise AssertionError("snapshot must not iterate job history")
+
+    registry._jobs = NoScanDict(registry._jobs)
+    snapshot = registry.snapshot()
+    assert snapshot["received_count"] == 2
+    assert snapshot["completed_count"] == 1
+    assert snapshot["failed_count"] == 1
+    assert snapshot["running_count"] == 0
+    assert snapshot["mean_reconstruction_time_ms"] == 10

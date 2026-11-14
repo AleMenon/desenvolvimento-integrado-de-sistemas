@@ -302,19 +302,8 @@ private:
         const auto now = std::chrono::steady_clock::now();
         accrue_queue_until(now);
         const double uptime_ms = std::chrono::duration<double, std::milli>(now - started_).count();
-        std::size_t completed = 0;
-        std::size_t running = 0;
-        std::size_t failed = 0;
-        double reconstruction_ms = 0.0;
-        for (const auto& item : jobs_) {
-            const auto& job = *item.second;
-            if (job.status == "running") ++running;
-            else if (job.status == "failed") ++failed;
-            else if (job.status == "completed") {
-                ++completed;
-                reconstruction_ms += job.execution_time_ms.get<double>();
-            }
-        }
+        // O(1): avoid scanning every retained job on each metrics poll.
+        // Detailed histories are listed only by /metrics/reconstructions.
         std::size_t mode = 0;
         double longest_ms = -1.0;
         for (const auto& pair : queue_histogram_ms_) {
@@ -325,13 +314,13 @@ private:
         }
         return {{"schema_version", 1}, {"implementation", "cpp"},
                 {"timestamp_utc", utc_now()}, {"uptime_ms", uptime_ms},
-                {"received_count", jobs_.size()}, {"completed_count", completed},
-                {"failed_count", failed}, {"running_count", running},
+                {"received_count", jobs_.size()}, {"completed_count", completed_count_},
+                {"failed_count", failed_count_}, {"running_count", running_count_},
                 {"queue_size", queue_.size()},
                 {"queue_mean", uptime_ms > 0 ? weighted_queue_ms_ / uptime_ms : 0.0},
                 {"queue_mode", mode},
                 {"mean_reconstruction_time_ms",
-                    completed ? json(reconstruction_ms / completed) : json(nullptr)}};
+                    completed_count_ ? json(completed_duration_ms_ / completed_count_) : json(nullptr)}};
     }
 
     std::shared_ptr<Job> find_job(const std::string& id) {
@@ -421,6 +410,7 @@ private:
                 job = queue_.front();
                 queue_.pop_front();
                 job->status = "running";
+                ++running_count_;
                 job->started_at = utc_now();
             }
             // Apenas em builds de teste: mantém o worker ocupado sem segurar
@@ -473,6 +463,9 @@ private:
                 job->stop_reason = result.stop_reason;
                 job->result = std::move(payload);
                 job->status = "completed";
+                --running_count_;
+                ++completed_count_;
+                completed_duration_ms_ += duration;
             } catch (const std::exception&) {
                 std::lock_guard<std::mutex> guard(mutex_);
                 job->finished_at = utc_now();
@@ -482,6 +475,8 @@ private:
                 job->failure = {{"code", "RECONSTRUCTION_FAILED"},
                                 {"message", "Erro ao executar a reconstrução"}};
                 job->status = "failed";
+                --running_count_;
+                ++failed_count_;
             }
         }
     }
@@ -493,6 +488,11 @@ private:
     std::chrono::steady_clock::time_point last_queue_update_{started_};
     double weighted_queue_ms_ = 0.0;
     std::map<std::size_t, double> queue_histogram_ms_;
+    // Updated on state transitions under mutex_; never scan retained jobs.
+    std::size_t completed_count_ = 0;
+    std::size_t failed_count_ = 0;
+    std::size_t running_count_ = 0;
+    double completed_duration_ms_ = 0.0;
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::shared_ptr<Job>> queue_;

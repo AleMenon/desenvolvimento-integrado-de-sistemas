@@ -16,7 +16,7 @@ Os horários são ISO 8601 UTC, as durações usam relógio **monotônico**, mem
 
 A fila conta **somente requisições aguardando processamento**; tarefas em execução são contadas separadamente. `queue_mean` e `queue_mode` no endpoint são **ponderadas pelo tempo, desde o início do servidor**, inclusive períodos com fila vazia. No arquivo de resumo, `queue_mean_sampled` e `queue_mode_sampled` são estimativas baseadas nas amostras colhidas no ensaio, diferentes das estatísticas desde a inicialização.
 
-A duração individual `execution_time_ms` corresponde apenas ao cálculo CGNR, **não** ao tempo de espera na fila, serialização JSON nem à comunicação. `total_execution_time_ms` no resumo é o intervalo entre a primeira requisição aceita e a última concluída dentro da janela (inclui espera na fila); `monitoring_window_ms` é o tempo em que o monitor ficou aberto. Se nenhuma requisição terminar, `total_execution_time_ms` será `null`. Para comparar um experimento, inicie o monitor antes dos envios e finalize-o depois da última conclusão. O total de imagens reconstruídas é `completed_count` (diferença do contador entre início e fim da observação), não o número de requisições recebidas.
+A duração individual `execution_time_ms` corresponde apenas ao cálculo CGNR, **não** ao tempo de espera na fila, serialização JSON nem à comunicação. `total_execution_time_ms` no resumo é o intervalo entre a primeira requisição aceita e a última concluída dentro da janela (inclui espera na fila); `monitoring_window_ms` é o tempo em que o monitor ficou aberto. Se a janela terminar com tarefas ainda em andamento, começar com trabalhos já pendentes ou não contiver todos os registros de conclusão, `workload_complete` será `false`: `total_execution_time_ms` e `images_per_second` serão `null`, em vez de estimativas enganosas. Os contadores (`received_count`, `completed_count`, `failed_count`), as amostras e os registros de tarefas concluídas permanecem disponíveis. `inflight_at_start` e `unfinished_count_at_end` indicam a carga pendente nos dois extremos da janela. Se nenhuma requisição terminar, `total_execution_time_ms` também será `null`. Para comparar um experimento, inicie o monitor antes dos envios e finalize-o depois da última conclusão. O total de imagens reconstruídas é `completed_count` (diferença do contador entre início e fim da observação), não o número de requisições recebidas.
 
 ## C++ — executar
 
@@ -90,7 +90,7 @@ Quando a TASK-12 estiver integrada, inicie esse servidor Python e use o **mesmo 
 
 **Comparabilidade:** executar uma implementação por vez na mesma máquina, fixando modelos, sinais, número de clientes, critérios de parada e número de threads BLAS (`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1`). Usar o mesmo período de amostragem e incluir o tratamento da carga de trabalho inteira na janela. O monitor externo adiciona uma pequena carga de CPU às medições, mas não é incluído na CPU/RSS do PID do servidor.
 
-As métricas ficam em memória no servidor; após reinício os contadores e registros voltam a zero. O cliente deve iniciar o monitor antes do ensaio e salvar o resultado antes de encerrar o servidor. `GET /metrics/reconstructions` recupera todas as tarefas desde o último início; o exportador filtra apenas as finalizadas na janela atual.
+As métricas ficam em memória no servidor; após reinício os contadores e registros voltam a zero. O cliente deve iniciar o monitor antes do ensaio e salvar o resultado antes de encerrar o servidor. `GET /metrics/reconstructions` recupera todas as tarefas desde o último início; o exportador filtra apenas as finalizadas na janela atual. Essa consulta detalhada é O(n) no número de trabalhos armazenados e deve ser usada preferencialmente ao finalizar o ensaio. Já `GET /metrics` atualiza seus contadores incrementalmente, sem percorrer todo o histórico, para reduzir o custo de amostragem. A expiração/paginação de registros permanece para a TASK-15.
 
 ## Testes
 
@@ -103,4 +103,12 @@ uv run python -m pytest tests/unit/test_performance_metrics.py \
 uv run python -m pytest tests/integration/test_cpp_performance_metrics.py -v
 ```
 
-Os testes Python cobrem estados/cálculos de fila, o router FastAPI e a exportação CSV/JSON para `implementation=python` e `cpp`. O teste C++ inicia o executável real, envia reconstruções e valida o export. **Os testes só comprovam equivalência real Python/C++ quando os dois servidores reais estiverem integrados e executados com a mesma carga.**
+Os testes Python cobrem estados/cálculos de fila, o router FastAPI, janelas parciais e a exportação CSV/JSON para `implementation=python` e `cpp`. O teste C++ utiliza os hooks de teste da TASK-13 (`BUILD_TESTING=ON`) para criar uma fila real com cinco submissões concorrentes; as estatísticas `queue_mean`/`queue_mode` podem então ser verificadas sem depender da velocidade da matriz identidade. O teste C++ inicia o executável real, envia reconstruções e valida o export. **Os testes só comprovam equivalência real Python/C++ quando os dois servidores reais estiverem integrados e executados com a mesma carga.**
+
+## Estado da integração e dependência de teste
+
+**Comparação real ainda pendente:** o registro `PerformanceMetrics` e o router FastAPI estão prontos, mas a integração com o `worker` e a fila do servidor Python da TASK-12 deve ocorrer antes de um benchmark Python × C++ ponta a ponta. Testes com um servidor HTTP simulado provam compatibilidade do contrato, não equivalência experimental dos servidores reais.
+
+A dependência de desenvolvimento `httpx2` é usada pelo `fastapi.testclient.TestClient` na versão instalada de Starlette (1.2+). O `httpx` tradicional continua possível em versões compatíveis, mas não satisfazia o erro de importação apresentado no ambiente de teste atual.
+
+A TASK-16 foi desenvolvida sobre a TASK-13. Antes de concluir o PR, incorporar a TASK-13 atualizada à `main` e atualizar a branch `task-16`, preservando as instrumentações e os hooks de teste.

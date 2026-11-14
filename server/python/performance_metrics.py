@@ -36,6 +36,10 @@ class PerformanceMetrics:
         self._queue_size = 0
         self._jobs: dict[str, dict[str, Any]] = {}
         self._running_starts: dict[str, float] = {}
+        self._completed_count = 0
+        self._failed_count = 0
+        self._running_count = 0
+        self._completed_duration_ms = 0.0
 
     def _accrue_queue(self, now: float) -> None:
         elapsed = max(0.0, now - self._queue_changed)
@@ -76,6 +80,7 @@ class PerformanceMetrics:
             job["status"] = "running"
             job["started_at"] = utc_now()
             self._running_starts[request_id] = now
+            self._running_count += 1
 
     def finished(
         self,
@@ -96,6 +101,12 @@ class PerformanceMetrics:
             if elapsed < 0 or not math.isfinite(elapsed):
                 raise ValueError("execution_time_ms must be finite and nonnegative")
             del self._running_starts[request_id]
+            self._running_count -= 1
+            if success:
+                self._completed_count += 1
+                self._completed_duration_ms += elapsed
+            else:
+                self._failed_count += 1
             job.update({
                 "status": "completed" if success else "failed",
                 "finished_at": utc_now(),
@@ -109,9 +120,7 @@ class PerformanceMetrics:
         with self._lock:
             now = monotonic()
             self._accrue_queue(now)
-            finished = [j for j in self._jobs.values() if j["status"] == "completed"]
             uptime = max(0.0, now - self._started)
-            durations = [j["execution_time_ms"] for j in finished]
             queue_mode = min(self._queue_durations, key=lambda v: (-self._queue_durations[v], v))
             return {
                 "schema_version": 1,
@@ -119,13 +128,16 @@ class PerformanceMetrics:
                 "timestamp_utc": utc_now(),
                 "uptime_ms": uptime * 1000,
                 "received_count": len(self._jobs),
-                "completed_count": len(finished),
-                "failed_count": sum(j["status"] == "failed" for j in self._jobs.values()),
-                "running_count": sum(j["status"] == "running" for j in self._jobs.values()),
+                "completed_count": self._completed_count,
+                "failed_count": self._failed_count,
+                "running_count": self._running_count,
                 "queue_size": self._queue_size,
                 "queue_mean": self._queue_area / uptime if uptime > 0 else 0.0,
                 "queue_mode": queue_mode,
-                "mean_reconstruction_time_ms": sum(durations) / len(durations) if durations else None,
+                "mean_reconstruction_time_ms": (
+                    self._completed_duration_ms / self._completed_count
+                    if self._completed_count else None
+                ),
             }
 
     def reconstructions(self) -> dict:
