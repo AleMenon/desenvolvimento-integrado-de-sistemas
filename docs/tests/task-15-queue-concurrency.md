@@ -49,6 +49,39 @@ adicional. Por isso a memória não é reduzida exatamente no instante do TTL qu
 o servidor está ocioso; ela é reduzida na próxima operação que aciona a limpeza.
 Os arquivos de modelo continuam carregados na memória durante a execução.
 
+### Integração com a TASK-14 — entrega das imagens
+
+A retenção da TASK-15 é uma política de uso de memória, **não** um mecanismo de
+entrega garantida de imagens. Após `POST /reconstructions` (HTTP 202), a TASK-14
+deve acompanhar cada `request_id` até `completed` e buscar o resultado por
+`GET /reconstructions/{request_id}/result` **antes** que a retenção o remova.
+O cliente deve então salvar a imagem fora do servidor, em armazenamento próprio.
+
+Depois da expiração ou da remoção por capacidade, tanto o status quanto o
+resultado retornam HTTP **404** com `REQUEST_NOT_FOUND`. O cliente não consegue
+recuperar a imagem por esse identificador: será necessário reenviar o sinal com
+o mesmo modelo e parâmetros para uma nova reconstrução, se os dados originais
+ainda estiverem disponíveis. Não há confirmação de entrega, armazenamento
+persistente ou mecanismo de reprocessamento automático neste servidor.
+
+Para uma rodada com **45 sinais por servidor**, sem outras requisições, configure
+`max_retained_results` para pelo menos 45 e `result_ttl_seconds` para um valor
+maior que o tempo entre a **primeira conclusão** e a **última recuperação** de
+resultado. Para execuções compartilhadas, considere também os demais resultados
+concluídos no intervalo. Mesmo com essa configuração, a TASK-14 deve consultar e
+persistir os resultados prontamente; não espere o término de toda a carga com
+retenção insuficiente.
+
+### Relação com o coletor da TASK-16
+
+Os contadores de `GET /metrics` continuam acumulados após a remoção de
+resultados, mas `GET /metrics/reconstructions` lista apenas os registros ainda
+retidos. Se a coleta terminar sem todos os registros esperados, o coletor da
+TASK-16 identifica `workload_complete = false` e não produz um tempo total nem
+uma vazão que pareçam representar a carga completa. Isso **não recupera** as
+imagens descartadas. Para comparações completas, mantenha a retenção suficiente
+até o fim da coleta e da recuperação de resultados.
+
 ## Execução Python
 
 Configurar a instância Uvicorn por variáveis de ambiente:

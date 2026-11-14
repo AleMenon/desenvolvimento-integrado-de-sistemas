@@ -123,4 +123,12 @@ def test_cpp_history_bound_does_not_change_lifetime_counters():
         assert status["retained_results"] == 2
         assert status["evicted_count"] == 1
         assert requests.get(f"{url}/reconstructions/{ids[0]}").status_code == 404
+        expired = requests.get(f"{url}/reconstructions/{ids[0]}/result", timeout=3)
+        assert expired.status_code == 404
+        assert expired.json()["error"]["code"] == "REQUEST_NOT_FOUND"
         assert requests.get(f"{url}/reconstructions/{ids[2]}/result").status_code == 200
+        # TASK-16 retains lifetime counts but cannot export evicted job rows.
+        metrics = requests.get(url + "/metrics", timeout=3).json()
+        assert metrics["received_count"] == metrics["completed_count"] == 3
+        records = requests.get(url + "/metrics/reconstructions", timeout=3).json()
+        assert len(records["reconstructions"]) == 2
