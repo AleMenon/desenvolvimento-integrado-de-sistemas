@@ -17,6 +17,8 @@ def number(value, name):
 
 
 def count(value, name):
+    if isinstance(value, bool):
+        raise ValueError(f'{name} deve ser inteiro, não booleano')
     value = number(value, name)
     if not value.is_integer():
         raise ValueError(f'{name} deve ser inteiro')
@@ -56,9 +58,17 @@ def read_run(directory):
     completed = count(summary['completed_count'], 'completed_count')
     failed = count(summary['failed_count'], 'failed_count')
     received = count(summary['received_count'], 'received_count')
-    times = [number(j['execution_time_ms'], 'execution_time_ms')
-             for j in jobs if j['status'] == 'completed']
-    records_complete = (len(times) == completed and
+    times = []
+    missing_duration = False
+    for job in jobs:
+        if job['status'] != 'completed':
+            continue
+        raw_duration = job['execution_time_ms']
+        if raw_duration is None or not str(raw_duration).strip():
+            missing_duration = True
+        else:
+            times.append(number(raw_duration, 'execution_time_ms'))
+    records_complete = (not missing_duration and len(times) == completed and
                         sum(j['status'] == 'failed' for j in jobs) == failed)
     complete = (summary.get('workload_complete') is True and records_complete
                 and received == completed + failed and received > 0

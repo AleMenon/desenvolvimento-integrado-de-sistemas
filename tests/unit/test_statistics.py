@@ -1,7 +1,14 @@
 import csv
 import json
+import os
+import threading
+import time
+
 import pytest
-from monitoring.statistics import queue_durations, export_comparison, consolidate
+
+from monitoring.collect import Collector
+from monitoring.statistics import count, queue_durations, export_comparison, consolidate
+from server.python.performance_metrics import PerformanceMetrics
 
 
 def write_run(path, version='python', times=(10, 30), complete=True):
@@ -95,3 +102,107 @@ def test_duplicate_input_and_missing_records(tmp_path):
     row = export_comparison([a], tmp_path/'out')[0]
     assert row['mean_reconstruction_time_ms'] is None
     assert row['total_execution_time_ms'] is None
+
+
+@pytest.mark.parametrize('value', [True, False])
+def test_count_rejects_boolean(value):
+    with pytest.raises(ValueError, match='booleano'):
+        count(value, 'completed_count')
+    with pytest.raises(ValueError, match='booleano'):
+        queue_durations([{'elapsed_ms': 0, 'queue_size': value}])
+
+
+def test_read_run_rejects_boolean_counters_in_summary(tmp_path):
+    path = write_run(tmp_path / 'run')
+    summary_path = path / 'summary.json'
+    summary = json.loads(summary_path.read_text())
+    summary['completed_count'] = True
+    summary_path.write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match='booleano'):
+        export_comparison([path], tmp_path / 'out')
+
+
+def test_missing_completed_duration_returns_null_statistics(tmp_path):
+    path = write_run(tmp_path / 'run')
+    jobs_path = path / 'reconstructions.csv'
+    with jobs_path.open(newline='') as f:
+        jobs = list(csv.DictReader(f))
+    # Exports TASK-16 usam uma string vazia para campos None no CSV.
+    jobs[0]['execution_time_ms'] = ''
+    with jobs_path.open('w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=list(jobs[0]))
+        writer.writeheader()
+        writer.writerows(jobs)
+
+    row = export_comparison([path], tmp_path / 'out')[0]
+    assert row['completed_count'] == 2
+    assert row['failed_count'] == 1
+    assert row['workload_complete'] is False
+    assert row['mean_reconstruction_time_ms'] is None
+    assert row['total_execution_time_ms'] is None
+    assert row['queue_mean'] == 1.5
+    assert row['queue_mode'] == 2
+    report = json.loads((tmp_path / 'out' / 'comparison.json').read_text())
+    assert report['versions'][0]['mean_reconstruction_time_ms'] is None
+
+
+def test_missing_failed_duration_remains_acceptable(tmp_path):
+    path = write_run(tmp_path / 'run')
+    jobs_path = path / 'reconstructions.csv'
+    with jobs_path.open(newline='') as f:
+        jobs = list(csv.DictReader(f))
+    jobs[-1]['execution_time_ms'] = ''
+    with jobs_path.open('w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=list(jobs[0]))
+        writer.writeheader()
+        writer.writerows(jobs)
+    row = export_comparison([path], tmp_path / 'out')[0]
+    assert row['workload_complete'] is True
+    assert row['mean_reconstruction_time_ms'] == 20
+
+
+def test_task16_collector_export_round_trip(tmp_path):
+    """Confere a leitura dos arquivos produzidos por Collector.run()."""
+    folders = []
+    for implementation in ('python', 'cpp'):
+        metrics = PerformanceMetrics(implementation)
+        output = tmp_path / implementation
+        collector = Collector('http://127.0.0.1:1', os.getpid(), output, interval=0.01)
+        collector._get = lambda endpoint, registry=metrics: (
+            registry.snapshot() if endpoint == '/metrics' else registry.reconstructions()
+        )
+
+        def workload():
+            deadline = time.monotonic() + 3
+            while (collector.initial is None or not collector.samples) and time.monotonic() < deadline:
+                time.sleep(0.001)
+            assert collector.initial is not None and collector.samples
+            metrics.accepted('req-1', 'client', 'signal', 'model')
+            time.sleep(0.02)
+            metrics.started('req-1')
+            time.sleep(0.02)
+            metrics.finished('req-1', success=True, iterations=1,
+                             converged=True, stop_reason='tolerance_reached',
+                             execution_time_ms=12.5)
+
+        thread = threading.Thread(target=workload)
+        thread.start()
+        try:
+            summary = collector.run(duration=0.25)
+        finally:
+            thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert summary['workload_complete'] is True
+        assert summary['completed_count'] == 1
+        for name in ('summary.json', 'samples.csv', 'reconstructions.csv'):
+            assert (output / name).is_file()
+        folders.append(output)
+
+    rows = export_comparison(folders, tmp_path / 'comparison')
+    assert [row['implementation'] for row in rows] == ['cpp', 'python']
+    assert all(row['completed_count'] == 1 for row in rows)
+    assert all(row['failed_count'] == 0 for row in rows)
+    assert all(row['workload_complete'] is True for row in rows)
+    assert all(row['mean_reconstruction_time_ms'] == 12.5 for row in rows)
+    assert all(row['total_execution_time_ms'] is not None for row in rows)
+    assert all(row['queue_observation_time_ms'] > 0 for row in rows)
