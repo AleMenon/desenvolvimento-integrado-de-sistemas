@@ -45,3 +45,24 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
 Os testes iniciam o servidor em porta local efêmera, exercitam o `ReconstructionClient` real, conferem os metadados, rejeições de entrada, três clientes simultâneos e a equivalência da saída CGNR com o Python para a matriz identidade. Esta entrega **não** mede desempenho nem implementa geração dos 15 sinais por cliente.
 
 **Limitações:** os modelos reais ainda precisam ser adicionados; o catálogo é local e de confiança; o formato HTTP/JSON de vetores grandes pode ser custoso; o servidor não oferece autenticação nem persistência. Usar `127.0.0.1` em testes locais. O relatório comparativo de desempenho é escopo posterior.
+
+
+### Testes de concorrência e falhas (revisão da TASK-13)
+
+Além do fluxo principal, `test_cpp_server.py` inclui cenários de falha numérica
+(`failed`), resultado ainda indisponível (`409 RESULT_NOT_READY`) e
+saturação de fila (`503 QUEUE_FULL`). A falha numérica utiliza uma matriz
+1×1 com valor `1e-200` para provocar `numerical_breakdown` no CGNR.
+
+Os testes da fila utilizam uma trava por arquivo para controlar o avanço do
+worker, sem depender da velocidade de execução. O mecanismo só é compilado
+quando `BUILD_TESTING=ON` e só é acionado quando a variável de ambiente
+`TASK13_TEST_GATE_FILE` aponta para um arquivo existente. O próprio pytest
+cria e remove esse arquivo. **Não utilize essa variável ao executar o
+servidor normalmente.**
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build -j
+uv run python -m pytest tests/integration/test_cpp_server.py -v
+```

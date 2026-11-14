@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <filesystem>
@@ -422,6 +423,17 @@ private:
                 job->status = "running";
                 job->started_at = utc_now();
             }
+            // Apenas em builds de teste: mantém o worker ocupado sem segurar
+            // mutex_, permitindo observar estados queued/running e fila cheia.
+            // Remover o arquivo libera a execução; não depende de duração do CGNR.
+#ifdef TASK13_TEST_HOOKS
+            if (const char* gate = std::getenv("TASK13_TEST_GATE_FILE")) {
+                if (*gate != '\0') {
+                    while (fs::exists(gate))
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+            }
+#endif
             const auto start = std::chrono::steady_clock::now();
             try {
                 const auto result = reconstruction::cgnr(
