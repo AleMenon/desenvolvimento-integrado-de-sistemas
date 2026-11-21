@@ -150,42 +150,102 @@ controlado. Os resultados C++ e Python devem ser analisados apenas para a
 **mesma carga e modelo**. O utilitário da TASK-17 é aplicado separadamente
 por nível, nunca misturando 45, 90 e 180 solicitações em uma comparação só.
 
-### Como preencher a conclusão empírica do PR
+### Evidências observadas na revisão do PR #45
 
-Após executar os dois servidores, anexar/commitar o relatório real, a
-configuração e os CSVs relevantes; completar o quadro abaixo com **os seus**
-valores, sem copiar números hipotéticos:
+Nos experimentos com a matriz sintética densa `task18_dense_512`, a revisora
+registrou os seguintes **envios HTTP aceitos/rejeitados**, conforme o
+[comentário da revisão](https://github.com/AleMenon/desenvolvimento-integrado-de-sistemas/pull/45#pullrequestreview-6008629454):
 
-**Atenção:** o projeto ignora `results/` no `.gitignore`. Para incluir ao
-menos a conclusão no PR, copie o `report.md` produzido para um caminho
-rastreável, por exemplo:
+| Cenário | Python: aceitas / `QUEUE_FULL` | C++: aceitas / `QUEUE_FULL` |
+| --- | ---: | ---: |
+| 3 × 15 = 45 | 6 / 39 | 44 / 1 |
+| 3 × 30 = 90 | 11 / 79 | 89 / 1 |
+| 3 × 60 = 180 | 19 / 161 | 179 / 1 |
+
+**Escopo da evidência:** estes são os contadores citados na revisão, não valores
+inventados nem uma transcrição dos arquivos brutos locais. Para conferir CPU,
+RAM, pico da fila, integridade e as configurações exatas, é obrigatório publicar
+os artefatos do ensaio real com o comando abaixo.
+
+A aceitação HTTP **não é vazão de processamento**. A fração de respostas `202`
+depende da velocidade com que os workers processam o CGNR, da capacidade de
+espera da fila e do ritmo de envio dos três clientes. Respostas `503/QUEUE_FULL`
+representam *backpressure* da TASK-15, não tarefas aceitas e perdidas. Como os
+cenários não formam um benchmark com múltiplas repetições, as diferenças não
+permitem concluir que uma linguagem tem desempenho superior em geral.
+
+O pico de CPU de aproximadamente **715% no Python**, mencionado na revisão,
+deve ser lido conforme a metodologia da TASK-16:
+
+`CPU% = 100 × (Δ segundos de CPU em usuário+sistema) / (Δ segundos de relógio)`.
+
+Somam-se os tempos do processo principal e dos seus descendentes. Portanto,
+**100% corresponde a um núcleo lógico integralmente ocupado**, e 715% indicam
+uso equivalente a aproximadamente **7,15 núcleos lógicos** no intervalo
+observado, **não** 715% da capacidade total da máquina. O RSS é somado sobre
+processo e filhos (páginas compartilhadas podem ser contadas mais de uma vez).
+Picos são amostras, não médias do ensaio inteiro; consumo alto isoladamente
+não identifica a causa do gargalo.
+
+### Publicar os resultados medidos e rastreáveis
+
+O `results/` está no `.gitignore` e, portanto, o GitHub não recebe seus
+relatórios automaticamente. A TASK-18 fornece um publicador que **lê a
+execução já concluída** (não executa os testes novamente), valida cada
+`scenario.json` contra os contadores e `requests.csv`, confirma a presença
+dos três exports da TASK-16 e cria um pacote versionável.
+
+Identifique a pasta da execução real **da matriz densa**, contendo `report.json`
+e os seis cenários Python/C++. Por exemplo:
 
 ```bash
-mkdir -p docs/tests/results
-cp results/saturation/run-<timestamp>/report.md \
-  docs/tests/results/task-18-benchmark-local.md
-git add docs/tests/results/task-18-benchmark-local.md
+ls -dt results/saturation/run-*/
+# Escolha a execução correta, e então:
+uv run python -m monitoring.publish_task18_results \
+  results/saturation/run-<timestamp> \
+  --output docs/tests/results/task-18 \
+  --expect-model task18_dense_512
 ```
 
-Substitua `<timestamp>` pelo diretório realmente gerado; registre nele
-também a configuração da máquina e as limitações identificadas. Não use
-`git add -f results/` indiscriminadamente, pois os CSVs e matrizes
-experimentais podem ser grandes.
+O comando gera:
 
-| Cenário | Python: 503 | C++: 503 | Pico da fila Python/C++ | CPU e RSS | Estabilidade |
-| --- | --- | --- | --- | --- | --- |
-| 3 × 15 | A medir | A medir | A medir | A medir | A medir |
-| 3 × 30 | A medir | A medir | A medir | A medir | A medir |
-| 3 × 60 | A medir | A medir | A medir | A medir | A medir |
+```text
+docs/tests/results/task-18/
+├── report.md                   # resultados reais, configuração, CPU e gargalos
+├── report.json                 # ambiente, configuração e indicadores numéricos
+├── report.csv                  # tabela de comparação
+├── manifest.json               # hashes SHA-256 das evidências publicadas
+└── evidence/
+    ├── python/signals-{15,30,60}-per-client/
+    └── cpp/signals-{15,30,60}-per-client/
+        # cada cenário inclui scenario.json, requests.csv, summary.json,
+        # samples.csv e reconstructions.csv
+```
 
-Ao discutir gargalos, registrar se houve rejeições, queda/estabilização de
-vazão, crescimento da fila, CPU alta ou aumento de memória, além de condições
-experimentais (CPU, RAM, SO, tamanho da matriz e threads BLAS).
+Não são incluídos os arquivos enormes das matrizes sintéticas nem logs do
+servidor. Os parâmetros e `model_id` são preservados no `report.json`.
+O caminho absoluto do catálogo pode ser convertido para relativo ao projeto
+ou ocultado quando estiver fora dele; confira os dados antes de publicar.
 
-**Política de retenção TASK-15:** resultados antigos podem retornar HTTP 404
-após expiração; o executor aumenta a retenção por ensaio para reduzir esse
-risco. Se o coletor informar `workload_complete=false`, aumentar também
-`--monitor-seconds` e conferir `reconstruction_rows_exported`.
+**Se não houver uma execução completa local**, refaça o ensaio denso descrito
+em *Execução 2*. O publicador recusa cenários ausentes, contagens divergentes,
+erros de execução e arquivos brutos faltantes; ele **não inventa medições**.
+Se `workload_complete=false`, documente essa limitação e, se necessário,
+aumente `--monitor-seconds` e repita o cenário.
+
+Depois, versione somente o material relevante:
+
+```bash
+git add monitoring/saturation.py monitoring/publish_task18_results.py \
+  docs/tests/task-18-saturation.md docs/tests/results/task-18/ \
+  tests/unit/test_task18_reporting_review.py
+git diff --cached --check
+```
+
+**Política de retenção TASK-15:** resultados antigos podem retornar `404`
+após expiração; o executor amplia a retenção por ensaio para reduzir o risco.
+A ausência de reconstruções deve ser tratada como uma janela incompleta,
+não como vazão zero.
 
 ## Testes automatizados do executor
 

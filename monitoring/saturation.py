@@ -376,6 +376,148 @@ def run_scenario(implementation: str, url: str, pid: int, signals_per_client: in
     return result
 
 
+def render_report(report: dict) -> str:
+    """Render only stored experiment evidence, never current machine measurements.
+
+    This also lets the publish command regenerate the Markdown without re-running
+    the workloads (or replacing measured values with the publisher's hardware).
+    """
+    cfg = report["config"]
+    environment = report["environment"]
+    results = report["results"]
+    errors = report.get("errors") or []
+    model_id = cfg["model_id"]
+    if model_id == "demo_identity_3":
+        model_note = ("Modelo `demo_identity_3`: matriz identidade 3 × 3 usada para "
+                      "testar o protocolo e o controle de carga; não representa "
+                      "o custo de uma reconstrução experimental real.")
+    elif model_id.startswith("task18_dense_"):
+        model_note = (f"Modelo `{model_id}`: matriz **sintética densa**, gerada "
+                      f"de forma reproduzível (seed `{cfg.get('seed', 'N/D')}`). "
+                      "Não é uma matriz experimental real; seu custo depende "
+                      "da dimensão, algoritmo e parâmetros escolhidos.")
+    else:
+        model_note = (f"Modelo `{model_id}` definido pelo catálogo do ensaio. "
+                      "O formato, as dimensões e a origem devem ser verificados "
+                      "no catálogo antes de generalizar o resultado.")
+
+    lines = [
+        "# TASK-18 — Resultados de saturação", "",
+        f"Gerado em: `{report.get('generated_at_utc', 'N/D')}`.",
+        "Três clientes com largada sincronizada; um servidor novo por cenário.",
+        "Rejeição `503/QUEUE_FULL` = **backpressure intencional**; não é perda "
+        "de uma tarefa aceita (`202`).", "",
+        "## Ambiente medido", "",
+        f"- Sistema: `{environment.get('system', 'N/D')}`",
+        f"- Python: `{environment.get('python', 'N/D')}`",
+        f"- CPUs lógicas: `{environment.get('logical_cpu_count', 'N/D')}`",
+        f"- RAM física total (bytes): `{environment.get('total_ram_bytes', 'N/D')}`",
+        "", "## Configuração do experimento", "",
+        f"- Modelo: `{model_id}`; amostras por sinal: `{cfg.get('signal_size', 'N/D')}`",
+        f"- Catálogo utilizado: `{cfg.get('catalog', 'N/D')}`",
+        f"- Cargas: `{', '.join(str(n) for n in cfg.get('levels', []))}` sinais por cliente × 3 clientes",
+        f"- Workers internos por servidor: `{cfg.get('workers', 'N/D')}`; "
+        f"capacidade de espera: `{cfg.get('queue_capacity', 'N/D')}`",
+        f"- Monitoramento: `{cfg.get('monitor_seconds', 'N/D')}` s, "
+        f"amostragem: `{cfg.get('interval_seconds', 'N/D')}` s, "
+        f"drenagem: `{cfg.get('drain_timeout', 'N/D')}` s",
+        f"- Intervalo aleatório entre envios: `0–{cfg.get('jitter_ms', 'N/D')}` ms",
+        f"- CGNR: máximo de `{cfg.get('max_iterations', 'N/D')}` iterações, "
+        f"tolerância `{cfg.get('tolerance', 'N/D')}`",
+        "- BLAS: `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=1` "
+        "(definidos pelo executor para os processos iniciados)",
+        "", model_note, "", "## Medições por cenário", "",
+    ]
+    columns = ("implementation", "signals_per_client", "attempted", "accepted_http_202",
+               "queue_full_http_503", "queue_peak", "peak_cpu_percent",
+               "peak_memory_rss_bytes", "workload_complete", "stable")
+    lines.extend(["| " + " | ".join(columns) + " |",
+                  "| " + " | ".join(["---"] * len(columns)) + " |"])
+    lines.extend("| " + " | ".join("N/D" if result.get(k) is None else str(result[k])
+                                     for k in columns) + " |" for result in results)
+    lines += [
+        "", "## Interpretação da taxa de aceitação", "",
+        "`accepted_http_202` conta **envios HTTP aceitos**, não imagens/s "
+        "reconstruídas. O desempenho do CGNR, os workers disponíveis, "
+        "a capacidade da fila e o intervalo entre POSTs afetam quantos envios "
+        "recebem `202` antes que a fila fique cheia. Comparar somente cargas, "
+        "modelos e configurações equivalentes. Sem múltiplas repetições, os "
+        "valores não são uma conclusão geral de desempenho entre linguagens.", "",
+    ]
+    py_by_load = {r["signals_per_client"]: r for r in results if r["implementation"] == "python"}
+    cpp_by_load = {r["signals_per_client"]: r for r in results if r["implementation"] == "cpp"}
+    if py_by_load.keys() & cpp_by_load.keys():
+        lines += ["| Carga total | Python (202/503) | C++ (202/503) |",
+                  "| ---: | ---: | ---: |"]
+        for level in sorted(py_by_load.keys() & cpp_by_load.keys()):
+            py, cpp = py_by_load[level], cpp_by_load[level]
+            lines.append(f"| {3*level} | {py['accepted_http_202']} / {py['queue_full_http_503']} "
+                         f"| {cpp['accepted_http_202']} / {cpp['queue_full_http_503']} |")
+    else:
+        lines.append("Não há pares Python/C++ com a mesma carga neste relatório.")
+    lines += [
+        "", "## Metodologia de CPU e memória", "",
+        "O coletor da TASK-16 soma o **tempo de CPU (usuário + sistema) do "
+        "processo monitorado e dos processos filhos**; calcula, entre duas "
+        "amostras, `CPU% = 100 × Δ(tempo de CPU) / Δ(tempo de parede)`. "
+        "Por convenção, **100% equivale ao uso contínuo de um núcleo lógico**. "
+        "Por isso, o valor pode ultrapassar 100% quando há processamento "
+        "paralelo em múltiplos núcleos: por exemplo, 715% equivalem a "
+        "aproximadamente 7,15 núcleos lógicos durante o intervalo observado, "
+        "e **não** a 715% da capacidade total da máquina. O número de "
+        "workers CGNR não equivale necessariamente ao número de threads "
+        "de todo o processo. O pico é uma **amostra temporal**, não a média "
+        "sobre toda a carga.", "",
+        "A memória é a **soma do RSS** do processo e dos filhos em cada amostra. "
+        "Memória compartilhada pode ser contabilizada em mais de um processo; "
+        "aumento de RSS isoladamente não comprova vazamento de memória.",
+        "", "## Observações e gargalos", "",
+    ]
+    for r in results:
+        lines.append(f"- **{r['implementation']} — {r['signals_per_client']} sinais/cliente:** "
+                     f"{r.get('observations') or 'Sem observações automáticas; analisar dados brutos.'}")
+    lines += ["", "## Progressão da carga", ""]
+    trends = 0
+    for implementation in sorted({r["implementation"] for r in results}):
+        runs = sorted((r for r in results if r["implementation"] == implementation),
+                      key=lambda r: r["signals_per_client"])
+        for prev, curr in zip(runs, runs[1:]):
+            a, b = prev.get("throughput_images_per_second"), curr.get("throughput_images_per_second")
+            if (a is not None and b is not None and a > 0 and
+                    curr["signals_per_client"] >= prev["signals_per_client"] * 1.5 and
+                    b <= a * 1.1):
+                lines.append(f"- {implementation}: vazão estável ou menor entre "
+                             f"{prev['signals_per_client']} e {curr['signals_per_client']} sinais/cliente "
+                             "(indício; verificar se ambas as janelas são completas).")
+                trends += 1
+            ra, rb = prev.get("peak_memory_rss_bytes"), curr.get("peak_memory_rss_bytes")
+            if ra and rb and rb >= ra * 1.25:
+                lines.append(f"- {implementation}: pico RSS aumentou pelo menos 25% "
+                             f"entre {prev['signals_per_client']} e {curr['signals_per_client']} sinais/cliente "
+                             "(não é evidência suficiente de vazamento).")
+                trends += 1
+    if not trends:
+        lines.append("- Nenhuma tendência adicional foi detectada pelas heurísticas automáticas; "
+                     "analisar os dados de fila, CPU, RSS e as repetições dos ensaios.")
+    if errors:
+        lines += ["", "## Erros durante a campanha", "", *[f"- {e}" for e in errors]]
+    lines += [
+        "", "## Limitações e evidências", "",
+        "- `workload_complete=false`: a janela de coleta não cobre toda a carga; "
+        "não comparar os tempos de execução e a vazão como se fossem completos.",
+        "- A matriz sintética é um cenário controlado, não um modelo experimental real.",
+        "- `queue_peak` é observado pelo servidor; o pico amostrado da TASK-16 "
+        "pode perder alterações de fila muito rápidas.",
+        "- O pacote de evidências inclui `report.json`, `report.csv` e, "
+        "para cada cenário, `scenario.json`, `requests.csv`, `summary.json`, "
+        "`samples.csv` e `reconstructions.csv`. Os números são derivados da "
+        "execução registrada, não de estimativas manuais.",
+        "", "Gargalos e comparação de implementações dependem da carga, "
+        "hardware e configuração observados; outros ambientes exigem novas medições.", "",
+    ]
+    return "\n".join(lines)
+
+
 def write_report(results: list[dict], directory: Path, settings: Settings,
                  errors: list[str] | None = None) -> None:
     directory.mkdir(parents=True, exist_ok=True)
@@ -383,7 +525,7 @@ def write_report(results: list[dict], directory: Path, settings: Settings,
         writer = csv.DictWriter(f, fieldnames=REPORT_COLUMNS, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(results)
-    (directory / "report.json").write_text(json.dumps({
+    report = {
         "schema_version": 1,
         "generated_at_utc": utc_now(),
         "environment": {"system": platform.platform(), "python": sys.version.split()[0],
@@ -399,48 +541,10 @@ def write_report(results: list[dict], directory: Path, settings: Settings,
                    "signal_size": len(settings.signal), "max_iterations": settings.max_iterations,
                    "tolerance": settings.tolerance, "seed": settings.seed},
         "results": results,
-    }, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
-    columns = ("implementation", "signals_per_client", "attempted", "accepted_http_202",
-               "queue_full_http_503", "queue_peak", "peak_cpu_percent",
-               "peak_memory_rss_bytes", "workload_complete", "stable")
-    lines = ["# TASK-18 — Resultados de saturação", "",
-             "Três clientes simultâneos; cada combinação inicia um servidor novo.",
-             "`QUEUE_FULL` é controle de carga, não perda de uma requisição aceita.",
-             "CPU em % de um núcleo lógico; memória em bytes RSS do processo e descendentes.",
-             "", "| " + " | ".join(columns) + " |",
-             "| " + " | ".join(["---"] * len(columns)) + " |"]
-    lines.extend("| " + " | ".join(str(result.get(key, "N/D")) for key in columns) + " |" for result in results)
-    lines += ["", "## Indícios e limitações"]
-    for result in results:
-        lines += [f"- **{result['implementation']} — {result['signals_per_client']} sinais/cliente:** "
-                  f"{result['observations']}"]
-    lines += ["", "## Progressão da carga"]
-    for implementation in sorted({r["implementation"] for r in results}):
-        runs = sorted((r for r in results if r["implementation"] == implementation),
-                      key=lambda r: r["signals_per_client"])
-        for previous, current in zip(runs, runs[1:]):
-            a, b = previous.get("throughput_images_per_second"), current.get("throughput_images_per_second")
-            if (a is not None and b is not None and a > 0
-                    and current["signals_per_client"] >= previous["signals_per_client"] * 1.5
-                    and b <= a * 1.10):
-                lines.append(f"- **{implementation}:** vazão estabilizada ou reduzida "
-                             f"entre {previous['signals_per_client']} e {current['signals_per_client']} "
-                             "sinais/cliente (indício de limite de capacidade, sujeito a validação)")
-            ma, mb = previous.get("peak_memory_rss_bytes"), current.get("peak_memory_rss_bytes")
-            if ma and mb and mb >= ma * 1.25:
-                lines.append(f"- **{implementation}:** pico RSS cresceu pelo menos 25% "
-                             f"entre {previous['signals_per_client']} e {current['signals_per_client']} "
-                             "sinais/cliente (não demonstra vazamento de memória)")
-    if not results:
-        lines.append("- Nenhum cenário foi concluído; consultar erros abaixo")
-    if errors:
-        lines += ["", "## Cenários não executados", *[f"- {e}" for e in errors]]
-    lines += ["", "**Atenção:** CPU alta, crescimento de RSS ou saturação de fila são indícios",
-              "de gargalo, não prova isolada da causa. A matriz identidade de demonstração",
-              "não caracteriza o custo de matrizes experimentais reais.", "",
-              "Se `workload_complete=false`, os resultados não devem ser tratados como",
-              "tempos completos comparáveis. Os dados brutos estão nas pastas por cenário.", ""]
-    (directory / "report.md").write_text("\n".join(lines), encoding="utf-8")
+    }
+    (directory / "report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
+    (directory / "report.md").write_text(render_report(report), encoding="utf-8")
 
 
 def _parse_signal(path: Path | None) -> tuple[float, ...]:
