@@ -1,0 +1,4 @@
+signals_per_client,total_signals,repeats_required,paired_valid,comparable,python_median_total_ms,cpp_median_total_ms,python_median_reconstruction_ms,cpp_median_reconstruction_ms,python_median_cpu_percent,cpp_median_cpu_percent,python_median_rss_mib,cpp_median_rss_mib,python_median_queue,cpp_median_queue,python_peak_queue_max,cpp_peak_queue_max,speedup_cpp_vs_python
+15,45,3,3,True,87.0,580.0,3.739445866772763,2.774337,122.70584227235823,25.493465581026193,69.3828125,15.1171875,11.608538037204662,0.0,39,2,0.15
+30,90,3,3,True,188.0,1234.0,4.083738844504599,2.982174466666667,143.66844235149344,26.51004372731456,70.5859375,15.8203125,22.395406839145846,0.0,78,2,0.15235008103727715
+60,180,3,3,True,344.0,2530.0,3.749295116661718,2.7951104,146.72040962818647,25.63017635949467,72.953125,17.25,38.490524827158595,0.0,154,2,0.1359683794466403
