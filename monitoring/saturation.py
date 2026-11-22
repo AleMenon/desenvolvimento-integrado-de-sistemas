@@ -58,6 +58,7 @@ class Settings:
     levels: tuple[int, ...] = (15, 30, 60)
     workers: int = 1
     queue_capacity: int = 8
+    max_inflight: int | None = None
     interval: float = 0.025
     monitor_seconds: float = 2.0
     drain_timeout: float = 10.0
@@ -79,6 +80,11 @@ class Settings:
             raise ValueError("workers must be between 1 and 32")
         if type(self.queue_capacity) is not int or not 1 <= self.queue_capacity <= 100000:
             raise ValueError("queue_capacity must be between 1 and 100000")
+        if self.max_inflight is not None and (
+            type(self.max_inflight) is not int
+            or not 1 <= self.max_inflight <= self.workers + self.queue_capacity
+        ):
+            raise ValueError("max_inflight must be between 1 and workers + queue_capacity")
         for name in ("interval", "monitor_seconds", "drain_timeout", "http_timeout", "tolerance"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
@@ -138,6 +144,7 @@ def launch_server(implementation: str, settings: Settings, directory: Path,
             "RECONSTRUCTION_CATALOG": str(settings.catalog.resolve()),
             "RECONSTRUCTION_WORKERS": str(settings.workers),
             "RECONSTRUCTION_QUEUE_CAPACITY": str(settings.queue_capacity),
+            "RECONSTRUCTION_MAX_INFLIGHT": str(settings.max_inflight or (settings.workers + settings.queue_capacity)),
             "RECONSTRUCTION_MAX_RESULTS": str(retained),
             "RECONSTRUCTION_RESULT_TTL_SECONDS": "3600",
         })
@@ -151,6 +158,7 @@ def launch_server(implementation: str, settings: Settings, directory: Path,
                 "--catalog", str(settings.catalog.resolve()),
                 "--queue-capacity", str(settings.queue_capacity),
                 "--workers", str(settings.workers),
+                "--max-inflight", str(settings.max_inflight or (settings.workers + settings.queue_capacity)),
                 "--max-retained-results", str(retained),
                 "--result-ttl-seconds", "3600"]
     else:
@@ -354,6 +362,7 @@ def run_scenario(implementation: str, url: str, pid: int, signals_per_client: in
         "observations": "; ".join(observations),
         "workers": settings.workers,
         "queue_capacity": settings.queue_capacity,
+        "admission_limit": settings.max_inflight or (settings.workers + settings.queue_capacity),
         "retention_evicted": after.get("evicted_count"),
         "server_health_ok": healthy,
         "server_process_alive": alive,
@@ -534,7 +543,9 @@ def write_report(results: list[dict], directory: Path, settings: Settings,
         "method": "three-client-synchronized-start, fresh-server-per-scenario",
         "errors": errors or [],
         "config": {"levels": settings.levels, "workers": settings.workers,
-                   "queue_capacity": settings.queue_capacity, "interval_seconds": settings.interval,
+                   "queue_capacity": settings.queue_capacity,
+                   "max_inflight": settings.max_inflight or (settings.workers + settings.queue_capacity),
+                   "interval_seconds": settings.interval,
                    "monitor_seconds": settings.monitor_seconds, "drain_timeout": settings.drain_timeout,
                    "jitter_ms": settings.jitter_ms, "model_id": settings.model_id,
                    "catalog": str(settings.catalog.resolve()),
@@ -564,6 +575,7 @@ def main() -> int:
                         help="number of signals PER CLIENT at each level (3 clients)")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--queue-capacity", type=int, default=8)
+    parser.add_argument("--max-inflight", type=int, default=None)
     parser.add_argument("--sample-interval", type=float, default=0.025)
     parser.add_argument("--monitor-seconds", type=float, default=2.0)
     parser.add_argument("--drain-timeout", type=float, default=10.0)
@@ -580,7 +592,8 @@ def main() -> int:
                         help="empty output directory; default: timestamped results/saturation/run-...")
     args = parser.parse_args()
     settings = Settings(levels=tuple(args.levels), workers=args.workers,
-                        queue_capacity=args.queue_capacity, interval=args.sample_interval,
+                        queue_capacity=args.queue_capacity, max_inflight=args.max_inflight,
+                        interval=args.sample_interval,
                         monitor_seconds=args.monitor_seconds, drain_timeout=args.drain_timeout,
                         jitter_ms=args.jitter_ms, http_timeout=args.http_timeout,
                         model_id=args.model_id, catalog=args.catalog,

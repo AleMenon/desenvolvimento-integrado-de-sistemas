@@ -220,10 +220,10 @@ class ReconstructionServer {
 public:
     ReconstructionServer(const fs::path& catalog, std::size_t queue_capacity,
                          std::size_t worker_count, std::size_t max_retained_results,
-                         double result_ttl_seconds)
+                         double result_ttl_seconds, std::size_t max_inflight)
         : models_(load_models(catalog)), queue_capacity_(queue_capacity),
           worker_count_(worker_count), max_retained_results_(max_retained_results),
-          result_ttl_seconds_(result_ttl_seconds) {
+          result_ttl_seconds_(result_ttl_seconds), admission_limit_(max_inflight) {
         for (std::size_t i = 0; i < worker_count_; ++i)
             workers_.emplace_back(&ReconstructionServer::work, this);
     }
@@ -264,6 +264,9 @@ public:
                               {"queue_capacity", queue_capacity_}, {"queue_size", queue_.size()},
                               {"queue_peak", queue_peak_}, {"worker_count", worker_count_},
                               {"running_count", running_count_}, {"accepted_count", accepted_count_},
+                              {"admission_limit", admission_limit_},
+                              {"inflight_count", accepted_count_ - completed_count_ - failed_count_},
+                              {"admission_rejected_count", admission_rejected_count_},
                               {"completed_count", completed_count_}, {"failed_count", failed_count_},
                               {"rejected_count", rejected_count_},
                               {"retained_results", completed_fifo_.size()},
@@ -433,8 +436,15 @@ private:
             std::lock_guard<std::mutex> guard(mutex_);
             if (stopping_)
                 return error(res, 503, "SERVER_SHUTTING_DOWN", "Servidor em encerramento");
+            if (accepted_count_ - completed_count_ - failed_count_ >= admission_limit_) {
+                ++rejected_count_;
+                ++admission_rejected_count_;
+                res.set_header("Retry-After", "1");
+                return error(res, 503, "QUEUE_FULL", "Limite de admissão atingido");
+            }
             if (queue_.size() >= queue_capacity_) {
                 ++rejected_count_;
+                res.set_header("Retry-After", "1");
                 return error(res, 503, "QUEUE_FULL", "Fila temporariamente cheia");
             }
             accrue_queue_until(std::chrono::steady_clock::now());
@@ -538,6 +548,7 @@ private:
     const std::size_t worker_count_;
     const std::size_t max_retained_results_;
     const double result_ttl_seconds_;
+    const std::size_t admission_limit_;
     // Metrics use a monotonic clock, never the system clock for durations.
     const std::chrono::steady_clock::time_point started_{std::chrono::steady_clock::now()};
     std::chrono::steady_clock::time_point last_queue_update_{started_};
@@ -551,6 +562,7 @@ private:
     std::size_t queue_peak_ = 0;
     std::uint64_t accepted_count_ = 0;
     std::uint64_t rejected_count_ = 0;
+    std::uint64_t admission_rejected_count_ = 0;
     std::uint64_t evicted_count_ = 0;
     std::mutex mutex_;
     std::condition_variable wake_;
@@ -596,6 +608,7 @@ int main(int argc, char** argv) {
     std::size_t queue_capacity = 64;
     std::size_t worker_count = 1;
     std::size_t max_retained_results = 1024;
+    std::size_t max_inflight = 0;  // 0: default workers + queue capacity
     double result_ttl_seconds = 3600.0;
     try {
         for (int i = 1; i < argc; ++i) {
@@ -604,6 +617,7 @@ int main(int argc, char** argv) {
                 std::cout << "Uso: reconstruction_server [--host IP] [--port PORTA]"
                           << " [--catalog ARQUIVO] [--queue-capacity N]"
                           << " [--workers N] [--max-retained-results N]"
+                          << " [--max-inflight N]"
                           << " [--result-ttl-seconds SEGUNDOS]\n";
                 return 0;
             }
@@ -614,14 +628,18 @@ int main(int argc, char** argv) {
             else if (arg == "--catalog") catalog = value;
             else if (arg == "--queue-capacity") queue_capacity = parse_positive_size(value, 100000);
             else if (arg == "--workers") worker_count = parse_positive_size(value, 32);
+            else if (arg == "--max-inflight") max_inflight = parse_positive_size(value, 100032);
             else if (arg == "--max-retained-results")
                 max_retained_results = parse_positive_size(value, 100000);
             else if (arg == "--result-ttl-seconds")
                 result_ttl_seconds = parse_positive_seconds(value);
             else throw std::invalid_argument("Opção desconhecida: " + arg);
         }
+        if (max_inflight == 0) max_inflight = queue_capacity + worker_count;
+        if (max_inflight > queue_capacity + worker_count)
+            throw std::invalid_argument("max-inflight excede workers + queue-capacity");
         ReconstructionServer reconstruction(
-            catalog, queue_capacity, worker_count, max_retained_results, result_ttl_seconds);
+            catalog, queue_capacity, worker_count, max_retained_results, result_ttl_seconds, max_inflight);
         httplib::Server http;
         reconstruction.configure_routes(http);
         std::cout << "Servidor C++ em http://" << host << ':' << port << std::endl;
