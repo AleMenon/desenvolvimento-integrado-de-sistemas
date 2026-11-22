@@ -1,0 +1,7 @@
+request_id,client_id,signal_id,model_id,algorithm,status,created_at,started_at,finished_at,execution_time_ms,iterations,converged,stop_reason
+463411ce-55e5-4cb9-84da-6951e506bbd5,task18-client-3,load-15-client-3-signal-1,task18_dense_512,cgnr,completed,2026-11-19T19:17:45.817Z,2026-11-19T19:17:45.817Z,2026-11-19T19:17:45.837Z,19.924099993659183,10,False,max_iterations
+5700abdb-a3bc-4959-9fca-e140f8b77623,task18-client-1,load-15-client-1-signal-1,task18_dense_512,cgnr,completed,2026-11-19T19:17:45.818Z,2026-11-19T19:17:45.837Z,2026-11-19T19:17:45.856Z,18.81160600169096,10,False,max_iterations
+3c0223ca-beea-4c07-8b02-8a3122494138,task18-client-2,load-15-client-2-signal-1,task18_dense_512,cgnr,completed,2026-11-19T19:17:45.819Z,2026-11-19T19:17:45.856Z,2026-11-19T19:17:45.864Z,7.49284300400177,10,False,max_iterations
+5a547ed8-cae1-4501-a0d5-a58233b9b871,task18-client-2,load-15-client-2-signal-7,task18_dense_512,cgnr,completed,2026-11-19T19:17:45.839Z,2026-11-19T19:17:45.864Z,2026-11-19T19:17:45.875Z,11.45212499977788,10,False,max_iterations
+97c1740f-a3d7-481d-8838-0ec65819eb8b,task18-client-3,load-15-client-3-signal-13,task18_dense_512,cgnr,completed,2026-11-19T19:17:45.858Z,2026-11-19T19:17:45.875Z,2026-11-19T19:17:45.878Z,2.1291619996191002,10,False,max_iterations
+d599a15e-307a-44a6-b547-331c8f97a3a6,task18-client-2,load-15-client-2-signal-14,task18_dense_512,cgnr,completed,2026-11-19T19:17:45.865Z,2026-11-19T19:17:45.878Z,2026-11-19T19:17:45.880Z,1.9162020034855232,10,False,max_iterations
