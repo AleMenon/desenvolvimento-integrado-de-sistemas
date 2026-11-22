@@ -123,8 +123,14 @@ arquivos brutos da TASK-16 por cenário, perfil, linguagem e repetição. Compar
 4. Vazão em **ensaios completos**, duração de reconstrução, CPU e RSS;
 5. Consistência das condições de hardware, matriz e configuração.
 
-Se o coletor marcar `workload_complete=false`, aumente `--monitor-seconds` e
-reexecute; não use aquela vazão. Um pico de CPU acima de 100% é possível porque
+Uma campanha só retorna código de saída **0** quando todos os pares foram
+produzidos, os servidores ficaram estáveis e ambos os perfis de cada par tiveram
+`workload_complete=true`. Mesmo que `stable=true`, `workload_complete=false`
+reprova a campanha. As evidências são mantidas no relatório com
+`validation_status=failed` e a lista de erros para diagnóstico; não publique
+como resultado final uma campanha incompleta. Aumente `--monitor-seconds` e
+reexecute em **outro** diretório se a janela de coleta for insuficiente.
+Um pico de CPU acima de 100% é possível porque
 100% representa um núcleo lógico, com tempo de CPU somado do processo e filhos.
 
 O relatório da TASK-18 é **baseline histórica**, não uma medição comparável a
@@ -138,7 +144,7 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
 uv run python -m pytest \
   tests/unit/test_task19_admission.py \
   tests/unit/test_task19_comparison.py \
-  tests/integration/test_task19_admission.py -v
+  tests/integration/test_task19_admission_http.py -v
 
 uv run python -m pytest tests/unit/test_task15_queue_control.py \
   tests/unit/test_task15_service.py \
@@ -160,5 +166,41 @@ existir, o teste é ignorado; não significa que o C++ foi validado.
 - Ajustes de workers precisam ser avaliados com threads BLAS e CPU disponível;
 - A conclusão da TASK-19 depende do relatório **medido** da nova campanha.
 
-Depois da execução, registre o `comparison.md` e dados relevantes em
-`docs/tests/results/task-19/`, sem colocar matrizes densas grandes no Git.
+## Publicar os resultados reais da campanha
+
+Os experimentos são salvos em `results/`, que está no `.gitignore`.
+A implementação e seus testes **não substituem** os 24 ensaios medidos.
+A campanha local já executada pode ser reutilizada, sem repetir os benchmarks.
+
+Antes de copiar, verifique que o relatório existente inclui as 12 comparações
+(2 implementações × 3 cargas × 2 repetições), com todos os perfis completos:
+
+```bash
+uv run python - <<'PY'
+import json
+from pathlib import Path
+path = Path('results/task19/before-after/comparison.json')
+data = json.loads(path.read_text(encoding='utf-8'))
+rows = data['comparisons']
+assert not data['errors'], data['errors']
+assert len(rows) == 12, f'{len(rows)} pares; esperados 12'
+assert all(r['before_stable'] is True and r['after_stable'] is True
+           and r['before_complete'] is True and r['after_complete'] is True
+           for r in rows), 'Há cenários instáveis ou incompletos'
+print('12 pares completos e estáveis; relatório pronto para publicação')
+PY
+```
+
+Os arquivos da execução anterior não incluem necessariamente
+`validation_status`: esse campo foi adicionado nesta revisão e só aparece
+em novos relatórios. A validação acima funciona também com arquivos antigos.
+
+```bash
+mkdir -p docs/tests/results/task-19
+cp results/task19/before-after/comparison.{md,csv,json} \
+  docs/tests/results/task-19/
+git add docs/tests/results/task-19/
+```
+
+Publique os arquivos **medidos na sua máquina**, não valores criados por testes
+sintéticos. Não adicione matrizes grandes nem diretórios de build ao Git.

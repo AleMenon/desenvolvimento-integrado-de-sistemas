@@ -84,6 +84,24 @@ def compare_rows(before: dict, after: dict, *, repeat: int) -> dict:
     }
 
 
+def campaign_errors(rows: list[dict], errors: list[str]) -> list[str]:
+    """Fail validation for missing, unstable or incomplete paired measurements.
+
+    Keep incomplete rows in the exports for diagnosis, but never return a
+    successful exit status for a campaign whose TASK-16 collection ended early.
+    """
+    failures = list(errors)
+    for row in rows:
+        identity = (f"{row['implementation']} {row['signals_per_client']}/client "
+                    f"repeat {row['repeat']}")
+        for profile in ("before", "after"):
+            if row[f"{profile}_stable"] is not True:
+                failures.append(f"Unstable run: {identity} {profile}")
+            if row[f"{profile}_complete"] is not True:
+                failures.append(f"Incomplete workload: {identity} {profile}")
+    return failures
+
+
 def write_comparison(rows: list[dict], output: Path, errors: list[str], *, model_id: str) -> None:
     """Write a measured report; never claim improvement based on 202 count alone."""
     output = Path(output)
@@ -99,6 +117,7 @@ def write_comparison(rows: list[dict], output: Path, errors: list[str], *, model
         "environment": {"platform": platform.platform(), "logical_cpus": psutil.cpu_count(),
                         "memory_bytes": psutil.virtual_memory().total},
         "method": "same model and signal; matched load, fresh process for each sample",
+        "validation_status": "failed" if errors else "passed",
         "errors": errors,
         "comparisons": rows,
     }
@@ -108,6 +127,9 @@ def write_comparison(rows: list[dict], output: Path, errors: list[str], *, model
         "# TASK-19 — Comparação antes/depois do controle de saturação",
         "",
         f"Modelo: `{model_id}`; três clientes simultâneos; servidor novo em cada execução.",
+        "",
+        "**Validação da campanha:** " + ("FALHOU" if errors else "APROVADA") +
+        ". Todos os pares devem ser estáveis e ter `workload_complete=true`.",
         "",
         "| Versão | Sinais/cliente | Repetição | 202 antes/depois | 503 antes/depois | Variação de rejeição (p.p.) | Fila máxima antes/depois | Estável antes/depois |",
         "| --- | ---: | ---: | --- | --- | ---: | --- | --- |",
@@ -215,9 +237,12 @@ def main() -> int:
                     errors.append(f"Missing pair: {implementation} {level} repeat {repeat}")
                 else:
                     comparisons.append(compare_rows(before, after, repeat=repeat))
+    # A stable server may still have an incomplete TASK-16 observation window.
+    # This must fail the campaign, not just suppress throughput in the report.
+    errors = campaign_errors(comparisons, errors)
     write_comparison(comparisons, output, errors, model_id=args.model_id)
     print(f"Compare report: {output / 'comparison.md'}")
-    return int(bool(errors) or any(not (r["before_stable"] and r["after_stable"]) for r in comparisons))
+    return int(bool(errors))
 
 
 if __name__ == "__main__":
