@@ -1,0 +1,2 @@
+# Preservar os bytes originais das evidências de benchmark.
+*.csv -text
