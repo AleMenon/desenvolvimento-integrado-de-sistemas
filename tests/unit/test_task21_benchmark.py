@@ -109,3 +109,9 @@ def test_report_exports_csv_json_markdown(tmp_path):
     assert json.loads((tmp_path / 'comparison.json').read_text())['plan_sha256'] == 'a'*64
     assert len(list(csv.DictReader((tmp_path / 'runs.csv').open()))) == 4
     assert len(list(csv.DictReader((tmp_path / 'comparison.csv').open()))) == 1
+
+    # Os relatórios CSV devem usar LF, inclusive em sistemas não Unix.
+    for filename in ('comparison.csv', 'runs.csv'):
+        raw = (tmp_path / filename).read_bytes()
+        assert b'\r\n' not in raw
+        assert raw.endswith(b'\n')

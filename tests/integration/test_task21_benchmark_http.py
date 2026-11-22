@@ -91,6 +91,12 @@ def test_three_clients_fixed_inputs_and_task16_exports(tmp_path):
     for filename in ('summary.json', 'samples.csv', 'reconstructions.csv',
                      'requests.csv', 'scenario.json'):
         assert (tmp_path / filename).is_file(), filename
+    # Verificar o terminador LF em todos os CSVs da execução.
+    for filename in ('requests.csv', 'samples.csv', 'reconstructions.csv'):
+        raw = (tmp_path / filename).read_bytes()
+        assert b'\r\n' not in raw
+        assert raw.endswith(b'\n')
+
     import csv
     with (tmp_path / 'requests.csv').open() as f:
         rows = list(csv.DictReader(f))

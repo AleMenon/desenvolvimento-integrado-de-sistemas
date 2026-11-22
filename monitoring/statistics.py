@@ -128,7 +128,7 @@ def export_comparison(directories, output):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     with (output / 'comparison.csv').open('w', newline='', encoding='utf-8') as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator='\n')
         writer.writeheader()
         writer.writerows(rows)
     (output / 'comparison.json').write_text(json.dumps(

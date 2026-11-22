@@ -173,6 +173,36 @@ as versões Python e C++ reais e exigem binário C++ compilado; se ausente, o
 teste C++ é explicitamente ignorado. Fixtures artificiais não provam a
 performance dos servidores.
 
+## Observações sobre latência HTTP e tempo de reconstrução
+
+Nas execuções publicadas, o Python apresentou menor tempo total de
+processamento das cargas HTTP, enquanto o C++ apresentou menor tempo médio
+de execução do CGNR.
+
+Essas métricas representam etapas diferentes. O tempo total inclui o
+comportamento da admissão HTTP, o ritmo de envio, o agendamento e a
+conclusão dos trabalhos; o tempo médio do CGNR considera apenas a
+reconstrução numérica registrada pelo servidor.
+
+O cliente do benchmark utiliza três clientes concorrentes, mas cada
+cliente aguarda a resposta de um POST antes de enviar o próximo.
+
+Na primeira repetição da carga de 45 sinais, os registros de
+`requests.csv` mostram aproximadamente 3,1 ms no primeiro POST do C++
+e cerca de 43 ms em diversos POSTs seguintes. A duração total da fase
+de envio foi de aproximadamente 620 ms para o C++, contra 49,5 ms
+para o Python na mesma configuração experimental.
+
+Esse padrão é compatível com uma possível influência da comunicação
+HTTP/TCP e da reutilização de conexões, mas os dados disponíveis não
+permitem identificar sua causa com certeza.
+
+Portanto, os resultados demonstram o desempenho das implementações
+sob o protocolo HTTP adotado, sem comprovar superioridade geral
+de um algoritmo CGNR sobre o outro. Uma investigação futura pode
+comparar conexões persistentes e não persistentes e diferentes
+configurações de transporte.
+
 ## Critério de aceite
 
 A TASK-21 só deve ser considerada concluída com **18 execuções reais**

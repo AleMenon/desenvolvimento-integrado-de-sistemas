@@ -368,7 +368,7 @@ def run_scenario(implementation: str, url: str, pid: int, signals_per_client: in
     }
     # Timestamp, PID and environment make the saved result reproducible.
     with (directory / "requests.csv").open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=REQUEST_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=REQUEST_COLUMNS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     (directory / "scenario.json").write_text(
@@ -522,7 +522,7 @@ def write_report(results: list[dict], directory: Path, settings: Settings,
                  errors: list[str] | None = None) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / "report.csv").open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=REPORT_COLUMNS, extrasaction="ignore")
+        writer = csv.DictWriter(f, fieldnames=REPORT_COLUMNS, extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
         writer.writerows(results)
     report = {

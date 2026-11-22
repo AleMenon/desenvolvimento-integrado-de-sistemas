@@ -161,13 +161,13 @@ class Collector:
     def export(self, elapsed: float, reconstructions: list[dict]) -> dict:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         with (self.output_dir / "samples.csv").open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=SAMPLE_COLUMNS)
+            writer = csv.DictWriter(stream, fieldnames=SAMPLE_COLUMNS, lineterminator='\n')
             writer.writeheader()
             writer.writerows(self.samples)
         reconstructions = sorted(reconstructions,
                                  key=lambda j: (j.get("created_at") or "", j.get("request_id") or ""))
         with (self.output_dir / "reconstructions.csv").open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=RECONSTRUCTION_COLUMNS)
+            writer = csv.DictWriter(stream, fieldnames=RECONSTRUCTION_COLUMNS, lineterminator='\n')
             writer.writeheader()
             writer.writerows(reconstructions)
         assert self.initial is not None and self.final is not None

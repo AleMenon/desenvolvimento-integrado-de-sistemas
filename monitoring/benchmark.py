@@ -357,7 +357,7 @@ def run_one(implementation: str, url: str, pid: int, settings: Settings,
               'queue_capacity': settings.queue_capacity,
               'exported_ids_match': job_ids_match}
     with (directory / 'requests.csv').open('w', newline='', encoding='utf-8') as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(requests_rows[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(requests_rows[0]), lineterminator='\n')
         writer.writeheader()
         writer.writerows(requests_rows)
     (directory / 'scenario.json').write_text(json.dumps(result, indent=2,
@@ -486,11 +486,11 @@ def write_report(results: list[dict], settings: Settings, output: Path, plan_sha
     (output / 'comparison.json').write_text(json.dumps(report, indent=2, ensure_ascii=False,
                                                       allow_nan=False) + '\n', encoding='utf-8')
     with (output / 'comparison.csv').open('w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=list(summary[0]))
+        writer = csv.DictWriter(f, fieldnames=list(summary[0]), lineterminator='\n')
         writer.writeheader()
         writer.writerows(summary)
     with (output / 'runs.csv').open('w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=SAMPLE_FIELDS, extrasaction='ignore')
+        writer = csv.DictWriter(f, fieldnames=SAMPLE_FIELDS, extrasaction='ignore', lineterminator='\n')
         writer.writeheader()
         writer.writerows(results)
     (output / 'comparison.md').write_text(render_report(report), encoding='utf-8')
