@@ -300,17 +300,42 @@ Consulte [Gráficos comparativos](docs/tests/task-22-comparative-plots.md).
 
 ## 15. Testes de carga e saturação
 
-A TASK-18 fornece um executor que inicia automaticamente servidores e três clientes concorrentes, com cargas progressivas.
+A TASK-18 disponibiliza um executor automatizado de benchmarks com três
+clientes concorrentes, servidores Python e C++ e exportação de métricas.
 
-Quando `monitoring/saturation.py` estiver presente na versão utilizada, execute:
+O executor inicia automaticamente um servidor para cada cenário.
 
-    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run --locked python -m monitoring.saturation --implementations python cpp --levels 15 30 60 --workers 1 --queue-capacity 8 --monitor-seconds 3 --drain-timeout 20
+Para executar uma campanha demonstrativa:
 
-O modelo `demo_identity_3` é pequeno: ele valida o fluxo e a concorrência, mas pode não provocar saturação.
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run --locked python -m monitoring.saturation --implementations python cpp --levels 15 30 60 --workers 1 --queue-capacity 8 --monitor-seconds 30 --drain-timeout 90
 
-Para uma matriz sintética mais exigente, siga as instruções da TASK-18 quando essa implementação estiver integrada à branch principal.
+Cada nível representa a quantidade de requisições por cliente. Assim, os
+níveis 15, 30 e 60 correspondem a 45, 90 e 180 envios por implementação.
 
-Não trate resultados de modelos sintéticos como desempenho de matrizes experimentais reais.
+Por padrão, o executor utiliza `demo_identity_3`. Esse modelo é adequado
+para validar o protocolo e a concorrência, mas não representa o custo de
+reconstrução de uma matriz experimental.
+
+Os resultados são gravados em `results/saturation/run-.../`, incluindo
+`report.md`, `report.json`, `report.csv` e evidências por cenário.
+
+Para reproduzir um experimento com outra matriz, consulte a
+[documentação da TASK-18](docs/tests/task-18-saturation.md), incluindo
+os parâmetros `--catalog`, `--model-id` e `--signal-file`.
+
+### Resultados experimentais publicados
+
+O repositório contém resultados reais de uma campanha com matriz sintética
+densa `task18_dense_512`, três clientes concorrentes e cargas progressivas.
+
+- [Relatório experimental](docs/tests/results/task-18/report.md)
+- [Dados estruturados](docs/tests/results/task-18/report.json)
+- [Manifesto de integridade SHA-256](docs/tests/results/task-18/manifest.json)
+
+Os resultados refletem as condições específicas da execução registrada.
+A taxa de aceitação HTTP não equivale à vazão de reconstrução, e as
+diferenças observadas não devem ser generalizadas para todas as máquinas
+ou matrizes.
 
 ## 16. Estrutura de diretórios
 
