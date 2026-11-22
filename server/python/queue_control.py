@@ -17,6 +17,7 @@ class QueueControl:
         *,
         queue_capacity=64,
         worker_count=1,
+        max_inflight=None,
         max_retained_results=1024,
         result_ttl_seconds=3600.0,
     ):
@@ -34,8 +35,16 @@ class QueueControl:
         ):
             raise ValueError("result_ttl_seconds must be finite and positive")
 
+        if max_inflight is None:
+            max_inflight = queue_capacity + worker_count
+        if (type(max_inflight) is not int or
+                not 1 <= max_inflight <= queue_capacity + worker_count):
+            raise ValueError("max_inflight must be between 1 and queue_capacity + worker_count")
         self.queue_capacity = queue_capacity
         self.worker_count = worker_count
+        self.max_inflight = max_inflight
+        self.inflight_count = 0
+        self.admission_rejected_count = 0
         self.max_retained_results = max_retained_results
         self.result_ttl_seconds = float(result_ttl_seconds)
         self.accepted_count = 0
@@ -47,12 +56,23 @@ class QueueControl:
         self.evicted_count = 0
         self._finished = deque()  # (monotonic completion time, request_id)
 
+    def can_admit(self):
+        # One atomic accounting counter for both queued and running jobs.
+        # The server holds its lock while calling accepted/finished/can_admit;
+        # this avoids a race while a worker removes a job from queue.Queue.
+        return self.inflight_count < self.max_inflight
+
     def accepted(self, queue_size):
+        if not self.can_admit():
+            raise AssertionError("admission limit exceeded")
+        self.inflight_count += 1
         self.accepted_count += 1
         self.queue_peak = max(self.queue_peak, queue_size)
 
-    def rejected(self):
+    def rejected(self, *, admission=False):
         self.rejected_count += 1
+        if admission:
+            self.admission_rejected_count += 1
 
     def started(self):
         self.running_count += 1
@@ -63,6 +83,9 @@ class QueueControl:
         if self.running_count <= 0:
             raise AssertionError("finished without a running reconstruction")
         self.running_count -= 1
+        if self.inflight_count <= 0:
+            raise AssertionError("finished without an accepted reconstruction")
+        self.inflight_count -= 1
         if success:
             self.completed_count += 1
         else:
@@ -97,6 +120,9 @@ class QueueControl:
             "queue_size": queue_size,
             "queue_peak": self.queue_peak,
             "worker_count": self.worker_count,
+            "admission_limit": self.max_inflight,
+            "inflight_count": self.inflight_count,
+            "admission_rejected_count": self.admission_rejected_count,
             "running_count": self.running_count,
             "accepted_count": self.accepted_count,
             "completed_count": self.completed_count,

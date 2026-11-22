@@ -39,6 +39,7 @@ def test_queue_stats_and_terminal_retention():
 def test_ttl_evicts_only_finished_jobs():
     ctl = QueueControl(max_retained_results=10, result_ttl_seconds=0.02)
     jobs = {"finished": {"status": "completed"}, "queued": {"status": "queued"}}
+    ctl.accepted(1)
     ctl.started()
     ctl.finished("finished", success=True, jobs=jobs)
     time.sleep(0.04)

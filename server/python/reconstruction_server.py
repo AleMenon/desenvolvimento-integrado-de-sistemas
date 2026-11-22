@@ -60,10 +60,11 @@ class ReconstructionService:
     def __init__(
         self, catalog_path, queue_capacity=QUEUE_CAPACITY, metrics=None, *,
         worker_count=1, max_retained_results=1024,
-        result_ttl_seconds=3600.0,
+        result_ttl_seconds=3600.0, max_inflight=None,
     ):
         self.queue_control = QueueControl(
             queue_capacity=queue_capacity, worker_count=worker_count,
+            max_inflight=max_inflight,
             max_retained_results=max_retained_results,
             result_ttl_seconds=result_ttl_seconds,
         )
@@ -272,6 +273,13 @@ class ReconstructionService:
                     503,
                 )
 
+            if not self.queue_control.can_admit():
+                self.queue_control.rejected(admission=True)
+                return (
+                    {"error": {"code": "QUEUE_FULL",
+                               "message": "Limite de admissão atingido."}},
+                    503,
+                )
             try:
                 self.pending.put_nowait(task)
             except queue.Full:
@@ -518,7 +526,7 @@ class ReconstructionService:
 
 def create_app(catalog_path=DEFAULT_CATALOG, *, worker_count=1,
                queue_capacity=QUEUE_CAPACITY, max_retained_results=1024,
-               result_ttl_seconds=3600.0):
+               result_ttl_seconds=3600.0, max_inflight=None):
     """Cria a aplicação FastAPI com um catálogo configurável."""
     service = None
     metrics = PerformanceMetrics('python')
@@ -530,6 +538,7 @@ def create_app(catalog_path=DEFAULT_CATALOG, *, worker_count=1,
         service = ReconstructionService(
             catalog_path, metrics=metrics,
             queue_capacity=queue_capacity, worker_count=worker_count,
+            max_inflight=max_inflight,
             max_retained_results=max_retained_results,
             result_ttl_seconds=result_ttl_seconds,
         )
@@ -636,6 +645,8 @@ def create_app(catalog_path=DEFAULT_CATALOG, *, worker_count=1,
         return JSONResponse(
             status_code=status,
             content=response,
+            headers={"Retry-After": "1"} if status == 503 and
+            response.get("error", {}).get("code") == "QUEUE_FULL" else None,
         )
 
     @app.get("/reconstructions/{request_id}")
@@ -689,6 +700,8 @@ app = create_app(
     os.environ.get("RECONSTRUCTION_CATALOG", str(DEFAULT_CATALOG)),
     worker_count=int(os.environ.get("RECONSTRUCTION_WORKERS", "1")),
     queue_capacity=int(os.environ.get("RECONSTRUCTION_QUEUE_CAPACITY", "64")),
+    max_inflight=(int(os.environ["RECONSTRUCTION_MAX_INFLIGHT"])
+                  if "RECONSTRUCTION_MAX_INFLIGHT" in os.environ else None),
     max_retained_results=int(os.environ.get("RECONSTRUCTION_MAX_RESULTS", "1024")),
     result_ttl_seconds=float(os.environ.get("RECONSTRUCTION_RESULT_TTL_SECONDS", "3600")),
 )
