@@ -1,0 +1,65 @@
+INFO:     Started server process [13708]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:52445 (Press CTRL+C to quit)
+INFO:     127.0.0.1:39778 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39782 - "GET /models/task18_dense_512 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39792 - "GET /queue HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39798 - "GET /metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39834 - "GET /metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39822 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39804 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39808 - "POST /reconstructions HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:39848 - "GET /queue HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39856 - "GET /queue HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39854 - "GET /metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39864 - "GET /queue HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39876 - "GET /metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39892 - "GET /metrics/reconstructions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39906 - "GET /health HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [13708]
