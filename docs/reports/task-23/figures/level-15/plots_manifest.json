@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task": "TASK-22",
+  "sources": [
+    "/home/julebyjule/utfpr/7-periodo/integrado/desenvolvimento-integrado-de-sistemas/task-23/docs/tests/task-21-evidence/runs/python/level-15/repeat-1",
+    "/home/julebyjule/utfpr/7-periodo/integrado/desenvolvimento-integrado-de-sistemas/task-23/docs/tests/task-21-evidence/runs/cpp/level-15/repeat-1",
+    "/home/julebyjule/utfpr/7-periodo/integrado/desenvolvimento-integrado-de-sistemas/task-23/docs/tests/task-21-evidence/runs/python/level-15/repeat-2",
+    "/home/julebyjule/utfpr/7-periodo/integrado/desenvolvimento-integrado-de-sistemas/task-23/docs/tests/task-21-evidence/runs/cpp/level-15/repeat-2",
+    "/home/julebyjule/utfpr/7-periodo/integrado/desenvolvimento-integrado-de-sistemas/task-23/docs/tests/task-21-evidence/runs/python/level-15/repeat-3",
+    "/home/julebyjule/utfpr/7-periodo/integrado/desenvolvimento-integrado-de-sistemas/task-23/docs/tests/task-21-evidence/runs/cpp/level-15/repeat-3"
+  ],
+  "versions": [
+    {
+      "implementation": "cpp",
+      "runs": 3,
+      "completed_count": 135,
+      "failed_count": 0,
+      "workload_complete": true,
+      "total_execution_time_ms": 1754.0,
+      "mean_reconstruction_time_ms": 2.7791294962962962,
+      "queue_mean": 0.0,
+      "queue_mode": 0,
+      "queue_observation_time_ms": 1898.6685540003236
+    },
+    {
+      "implementation": "python",
+      "runs": 3,
+      "completed_count": 135,
+      "failed_count": 0,
+      "workload_complete": true,
+      "total_execution_time_ms": 261.0,
+      "mean_reconstruction_time_ms": 3.747054970342476,
+      "queue_mean": 11.696875080069866,
+      "queue_mode": 0,
+      "queue_observation_time_ms": 346.38330299821973
+    }
+  ],
+  "charts": {
+    "cpu": "cpu_comparison.png",
+    "memory": "memory_comparison.png",
+    "total": "total_execution_time.png",
+    "mean": "mean_reconstruction_time.png",
+    "images": "image_counts.png"
+  },
+  "notes": [
+    "CPU e memória representam amostras por ensaio.",
+    "CPU percentual pode exceder 100% em múltiplos núcleos.",
+    "Memória RSS usa MiB (2^20 bytes).",
+    "Tempos indisponíveis aparecem como N/D, não zero.",
+    "Tempos estatísticos seguem a metodologia da TASK-17.",
+    "Comparações exigem cargas e ambientes equivalentes."
+  ]
+}
