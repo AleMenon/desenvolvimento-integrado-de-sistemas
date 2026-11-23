@@ -119,3 +119,65 @@ def test_release_duplicate_entries_rejected(tmp_path):
             stream.writestr("release_manifest.json", "{}")
     with pytest.raises(ValueError, match="duplicate"):
         verify_release(path)
+
+
+def test_validation_accepts_git_worktree(tmp_path, monkeypatch):
+    """A Git worktree with a .git file must be accepted."""
+    import subprocess
+
+    from scripts import task25_validate
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(repository), *map(str, args)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-q")
+    git("config", "user.name", "Task 25 Test")
+    git("config", "user.email", "task25@example.invalid")
+
+    (repository / "README.md").write_text(
+        "Fixture de teste\n", encoding="utf-8"
+    )
+
+    git("add", "README.md")
+    git("commit", "-qm", "Initial fixture")
+
+    worktree = tmp_path / "checkout"
+    git("worktree", "add", "--detach", worktree)
+
+    assert (worktree / ".git").is_file()
+
+    monkeypatch.setattr(
+        task25_validate,
+        "check_files",
+        lambda root: {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        task25_validate,
+        "verify_benchmark",
+        lambda root: {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        task25_validate,
+        "verify_figures",
+        lambda root: {"status": "PASS"},
+    )
+
+    result = task25_validate.validate(
+        worktree,
+        tmp_path / "validation",
+        evidence_only=True,
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert all(
+        check["status"] == "PASS"
+        for check in result["checks"].values()
+    )

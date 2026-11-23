@@ -337,7 +337,13 @@ def save_report(report: dict, directory: Path) -> None:
 def validate(source: Path, output: Path, *, evidence_only: bool = False,
              skip_full_suite: bool = False) -> dict:
     source, output = source.resolve(), output.resolve()
-    require(not (source / ".git").is_file(), "Source must be a normal Git checkout")
+    git_root = subprocess.check_output(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=source,
+        text=True,
+    ).strip()
+    require(Path(git_root).resolve() == source,
+            "Source must be the root of a Git worktree")
     output.mkdir(parents=True, exist_ok=True)
     checks: dict[str, dict] = {}
     report = {"schema_version": 1, "task": "TASK-25", "generated_at_utc": now(),
